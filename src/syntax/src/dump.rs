@@ -1,9 +1,9 @@
 use crate::{
     ast::{
-        Apply, Ast, AstKind, AstPool, BlockValueKind, Expression, Field, Id, Item, ItemBody,
-        Literal, Pattern, PatternDecl, Program, Statement,
+        Apply, Ast, AstKind, AstPool, BlockValueKind, Expression, ExpressionKind, Field, Id, Item,
+        ItemBody, Literal, Pattern, PatternDecl, PatternKind, Program, Statement, StatementKind,
     },
-    token::Ident,
+    token::{Ident, Span},
 };
 
 struct AstDump<'a> {
@@ -96,11 +96,19 @@ impl AstDump<'_> {
     fn desc(&mut self, s: &str) -> &mut Self {
         self.write_str(s)
     }
+    fn named_span(&mut self, s: &str, span: Span) -> &mut Self {
+        self.write_str(
+            format!(
+                "{} <{}:{} ~ {}:{}>",
+                s, span.lo.line, span.lo.col, span.hi.line, span.hi.col
+            )
+            .as_str(),
+        )
+    }
     fn ident(&mut self, elem: &Ident) -> &mut Self {
         let s = self.pool.get_intern(elem.0);
         let s = std::str::from_utf8(s).unwrap();
-        self.write_str(format!("Ident({s})").as_str());
-        self
+        self.write_str(format!("Ident({s})").as_str())
     }
     fn id(&mut self, elem: &Id) {
         self.ident(&elem.id);
@@ -228,20 +236,20 @@ impl AstDump<'_> {
         self.pop();
     }
     fn stmt(&mut self, elem: &Statement) {
-        self.desc("Statement").push(1);
-        match elem {
-            &Statement::Item(item) => {
+        self.named_span("Statement", elem.span).push(1);
+        match &elem.kind {
+            &StatementKind::Item(item) => {
                 self.desc("Item").sub_node(item, AstPool::item, Self::item);
             }
-            &Statement::Local(pd) => {
+            &StatementKind::Local(pd) => {
                 self.desc("Local")
                     .sub_node(pd, AstPool::pattern_decl, Self::patdecl);
             }
-            &Statement::Defer(body) => {
+            &StatementKind::Defer(body) => {
                 self.desc("Defer")
                     .sub_node(body, AstPool::expression, Self::expr);
             }
-            &Statement::Break(ref label, expr) => {
+            &StatementKind::Break(ref label, expr) => {
                 self.desc("Break")
                     .push(label.iter().len() + expr.iter().len());
                 if let Some(id) = label {
@@ -252,7 +260,7 @@ impl AstDump<'_> {
                 }
                 self.pop();
             }
-            &Statement::Continue(ref label, expr) => {
+            &StatementKind::Continue(ref label, expr) => {
                 self.desc("Continue")
                     .push(label.iter().len() + expr.iter().len());
                 if let Some(id) = label {
@@ -263,21 +271,21 @@ impl AstDump<'_> {
                 }
                 self.pop();
             }
-            &Statement::Return(expr) => {
+            &StatementKind::Return(expr) => {
                 self.desc("Return").push(expr.iter().len());
                 if let Some(expr) = expr {
                     self.node(expr, AstPool::expression, Self::expr);
                 }
                 self.pop();
             }
-            &Statement::Assign(left, right) => {
+            &StatementKind::Assign(left, right) => {
                 self.desc("Assign")
                     .push(2)
                     .node(left, AstPool::expression, Self::expr)
                     .node(right, AstPool::expression, Self::expr)
                     .pop();
             }
-            &Statement::Expr(expr) => {
+            &StatementKind::Expr(expr) => {
                 self.desc("Expr")
                     .sub_node(expr, AstPool::expression, Self::expr);
             }
@@ -285,53 +293,53 @@ impl AstDump<'_> {
         self.pop();
     }
     fn expr(&mut self, elem: &Expression) {
-        self.desc("Expression").push(1);
-        match elem {
-            &Expression::Use(id) => {
+        self.named_span("Expression", elem.span).push(1);
+        match &elem.kind {
+            &ExpressionKind::Use(id) => {
                 self.desc("Use")
                     .sub_node_list(id, AstPool::id_list, Self::id);
             }
-            Expression::Literal(lit) => {
+            ExpressionKind::Literal(lit) => {
                 self.desc("Literal").push(1).literal(lit);
                 self.pop();
             }
-            &Expression::Group(expr) => {
+            &ExpressionKind::Group(expr) => {
                 self.desc("Group")
                     .sub_node(expr, AstPool::expression, Self::expr);
             }
-            &Expression::Compound(exprs) => {
+            &ExpressionKind::Compound(exprs) => {
                 self.desc("Compound")
                     .sub_node_list(exprs, AstPool::expression_list, Self::expr);
             }
-            &Expression::Unary(op, expr) => {
+            &ExpressionKind::Unary(op, expr) => {
                 self.write_str(format!("Unary({op:?})").as_str()).sub_node(
                     expr,
                     AstPool::expression,
                     Self::expr,
                 );
             }
-            &Expression::Binary(op, left, right) => {
+            &ExpressionKind::Binary(op, left, right) => {
                 self.write_str(format!("Binary({op:?})").as_str())
                     .push(2)
                     .node(left, AstPool::expression, Self::expr)
                     .node(right, AstPool::expression, Self::expr)
                     .pop();
             }
-            &Expression::Call(callee, args) => {
+            &ExpressionKind::Call(callee, args) => {
                 self.desc("Call")
                     .push(1 + args.len())
                     .node(callee, AstPool::expression, Self::expr)
                     .node_list(args, AstPool::expression_list, Self::expr)
                     .pop();
             }
-            &Expression::Field(left, name) => {
+            &ExpressionKind::Field(left, name) => {
                 self.desc("Field")
                     .push(2)
                     .node(left, AstPool::expression, Self::expr)
                     .node(name, AstPool::id, Self::id)
                     .pop();
             }
-            &Expression::MethodCall(left, method, args) => {
+            &ExpressionKind::MethodCall(left, method, args) => {
                 self.desc("MethodCall")
                     .push(2 + args.len())
                     .node(left, AstPool::expression, Self::expr)
@@ -339,14 +347,14 @@ impl AstDump<'_> {
                     .node_list(args, AstPool::expression_list, Self::expr)
                     .pop();
             }
-            &Expression::Case(expr, pat) => {
+            &ExpressionKind::Case(expr, pat) => {
                 self.desc("Case")
                     .push(2)
                     .node(expr, AstPool::expression, Self::expr)
                     .node(pat, AstPool::pattern, Self::pat)
                     .pop();
             }
-            &Expression::Block(body, trailing) => {
+            &ExpressionKind::Block(body, trailing) => {
                 match trailing {
                     BlockValueKind::Void => {
                         self.desc("BlockVoid");
@@ -357,7 +365,7 @@ impl AstDump<'_> {
                 }
                 self.sub_node_list(body, AstPool::statement_list, Self::stmt);
             }
-            &Expression::If(cond, then, els) => {
+            &ExpressionKind::If(cond, then, els) => {
                 self.desc("If")
                     .push(2 + els.iter().len())
                     .node(cond, AstPool::expression, Self::expr)
@@ -368,7 +376,7 @@ impl AstDump<'_> {
                 }
                 self.pop();
             }
-            &Expression::Match(op, cases, bodies) => {
+            &ExpressionKind::Match(op, cases, bodies) => {
                 let pats = self.pool.pattern_list(cases);
                 let exprs = self.pool.expression_list(bodies);
                 self.desc("Match").push(1 + pats.len());
@@ -381,18 +389,18 @@ impl AstDump<'_> {
                 }
                 self.pop();
             }
-            &Expression::Do(body) => {
+            &ExpressionKind::Do(body) => {
                 self.desc("Do")
                     .sub_node(body, AstPool::expression, Self::expr);
             }
-            &Expression::While(cond, body) => {
+            &ExpressionKind::While(cond, body) => {
                 self.desc("While")
                     .push(2)
                     .node(cond, AstPool::expression, Self::expr)
                     .node(body, AstPool::expression, Self::expr)
                     .pop();
             }
-            &Expression::For(pat, in_, with, body) => {
+            &ExpressionKind::For(pat, in_, with, body) => {
                 self.desc("For")
                     .push(3 + with.iter().len())
                     .node(pat, AstPool::pattern, Self::pat)
@@ -406,33 +414,33 @@ impl AstDump<'_> {
         self.pop();
     }
     fn pat(&mut self, elem: &Pattern) {
-        self.desc("Pattern").push(1);
-        match elem {
-            Pattern::Wildcard => {
+        self.named_span("Pattern", elem.span).push(1);
+        match &elem.kind {
+            PatternKind::Wildcard => {
                 self.desc("Wildcard");
             }
-            Pattern::Rest => {
+            PatternKind::Rest => {
                 self.desc("Rest");
             }
-            &Pattern::Constant(expr) => {
+            &PatternKind::Constant(expr) => {
                 self.desc("Constant")
                     .sub_node(expr, AstPool::expression, Self::expr);
             }
-            &Pattern::Group(pat) => {
+            &PatternKind::Group(pat) => {
                 self.desc("Group")
                     .sub_node(pat, AstPool::pattern, Self::pat);
             }
-            Pattern::Bind(id) => {
+            PatternKind::Bind(id) => {
                 self.desc("Bind").push(1).ident(id).pop();
             }
-            &Pattern::DotId(ref id, pat) => {
+            &PatternKind::DotId(ref id, pat) => {
                 self.desc("DotId").push(1 + pat.iter().len()).ident(id);
                 if let Some(pat) = pat {
                     self.node(pat, AstPool::pattern, Self::pat);
                 }
                 self.pop();
             }
-            &Pattern::Compound(pats) => {
+            &PatternKind::Compound(pats) => {
                 self.desc("Compound")
                     .sub_node_list(pats, AstPool::pattern_list, Self::pat);
             }
@@ -440,8 +448,8 @@ impl AstDump<'_> {
         self.pop();
     }
     fn patdecl(&mut self, elem: &PatternDecl) {
-        self.desc("PatternDecl")
-            .push(1 + elem.mutable.iter().len() + elem.ty.iter().len() + elem.expr.iter().len())
+        self.desc("PatternDecl");
+        self.push(1 + elem.mutable.iter().len() + elem.ty.iter().len() + elem.expr.iter().len())
             .node(elem.pat, AstPool::pattern, Self::pat);
         if let Some(mutable) = elem.mutable {
             self.write_str(format!("Mutability({mutable})").as_str());

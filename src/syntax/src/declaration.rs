@@ -1,24 +1,27 @@
-use crate::ast::{Field, Pattern, PatternDecl};
+use crate::ast::{Field, Pattern, PatternDecl, PatternKind};
 use crate::parser::Parser;
 use crate::token::{DelimKind, Token};
 
 impl Parser<'_, '_> {
-
     pub(crate) fn bind_pattern(&mut self) -> Option<Pattern> {
-        match self.peek() {
+        let start = self.peek_ex().span.lo;
+        let kind = match self.peek() {
             Token::Ident(id) => {
                 self.bump();
-                Some(Pattern::Bind(id))
+                PatternKind::Bind(id)
             }
-            _ => self.pattern(),
-        }
+            _ => return self.pattern(),
+        };
+        let span = start.to(self.peek_ex_prev().span.hi);
+        Some(Pattern { kind, span })
     }
 
     pub(crate) fn pattern(&mut self) -> Option<Pattern> {
-        match self.peek() {
+        let start = self.peek_ex().span.lo;
+        let kind = match self.peek() {
             Token::Underscore => {
                 self.bump();
-                Some(Pattern::Wildcard)
+                PatternKind::Wildcard
             }
             Token::Dot
                 if matches!(self.peek_ahead(1), Token::Dot)
@@ -26,43 +29,46 @@ impl Parser<'_, '_> {
             {
                 self.bump();
                 self.bump();
-                Some(Pattern::Rest)
+                PatternKind::Rest
             }
             Token::Eq => {
                 self.bump();
                 let expr = self.expression()?;
                 let expr = self.pool.exprs.alloc(expr);
-                Some(Pattern::Constant(expr))
+                PatternKind::Constant(expr)
             }
             Token::Dot => {
                 self.bump();
                 let id = self.expect_ident()?;
-                let sub = if let Token::OpenDelim(DelimKind::Paren | DelimKind::Curly) = self.peek() {
+                let sub = if let Token::OpenDelim(DelimKind::Paren | DelimKind::Curly) = self.peek()
+                {
                     let pat = self.bind_pattern()?;
                     let pat = self.pool.pats.alloc(pat);
                     Some(pat)
                 } else {
                     None
                 };
-                Some(Pattern::DotId(id, sub))
+                PatternKind::DotId(id, sub)
             }
             Token::OpenDelim(DelimKind::Paren) => {
                 self.bump();
                 let pat = self.bind_pattern()?;
                 self.expect(Token::CloseDelim(DelimKind::Paren));
                 let pat = self.pool.pats.alloc(pat);
-                Some(Pattern::Group(pat))
+                PatternKind::Group(pat)
             }
             Token::OpenDelim(DelimKind::Curly) => {
                 let pats = self.parse_comma(DelimKind::Curly, Self::bind_pattern);
                 let pats = self.pool.pats.alloc_with(pats.into_iter());
-                Some(Pattern::Compound(pats))
+                PatternKind::Compound(pats)
             }
             _ => {
                 self.report(format!("unknown pattern token {:?}", self.peek()));
-                None
+                return None;
             }
-        }
+        };
+        let span = start.to(self.peek_ex_prev().span.hi);
+        Some(Pattern { kind, span })
     }
 
     pub(crate) fn param_func(&mut self) -> Option<PatternDecl> {
@@ -107,12 +113,13 @@ impl Parser<'_, '_> {
         } else {
             None
         };
-        Some(PatternDecl {
-            pat,
-            mutable,
-            ty,
-            expr,
-        })
+        Some(PatternDecl  {
+                pat,
+                mutable,
+                ty,
+                expr,
+            }
+        )
     }
 
     pub(crate) fn field_list(&mut self) -> Vec<Field> {

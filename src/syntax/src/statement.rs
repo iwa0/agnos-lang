@@ -1,12 +1,13 @@
 use crate::{
-    ast::{Item, ItemBody, PatternDecl, Statement, Visibility},
+    ast::{Item, ItemBody, PatternDecl, Statement, StatementKind, Visibility},
     parser::Parser,
     token::{DelimKind, Keyword, Token},
 };
 
 impl Parser<'_, '_> {
     pub(crate) fn statement(&mut self) -> Option<Statement> {
-        match self.peek() {
+        let start = self.peek_ex().span.lo;
+        let kind = match self.peek() {
             Token::Keyword(
                 kw @ (Keyword::Const
                 | Keyword::Module
@@ -91,10 +92,10 @@ impl Parser<'_, '_> {
                     vis,
                     name,
                     generics,
-                    body
+                    body,
                 };
                 let item = self.pool.items.alloc(item);
-                Some(Statement::Item(item))
+                StatementKind::Item(item)
             }
             Token::Keyword(kw @ (Keyword::Let | Keyword::Var)) => {
                 self.bump();
@@ -126,13 +127,13 @@ impl Parser<'_, '_> {
                     expr,
                 };
                 let decl = self.pool.patdecls.alloc(decl);
-                Some(Statement::Local(decl))
+                StatementKind::Local(decl)
             }
             Token::Keyword(Keyword::Defer) => {
                 self.bump();
                 let block = self.expr_or_block()?;
                 let block = self.pool.exprs.alloc(block);
-                Some(Statement::Defer(block))
+                StatementKind::Defer(block)
             }
             Token::Keyword(kw @ (Keyword::Break | Keyword::Continue)) => {
                 self.bump();
@@ -150,11 +151,11 @@ impl Parser<'_, '_> {
                     Some(expr)
                 };
                 let stmt = match kw {
-                    Keyword::Break => Statement::Break(name, expr),
-                    Keyword::Continue => Statement::Continue(name, expr),
+                    Keyword::Break => StatementKind::Break(name, expr),
+                    Keyword::Continue => StatementKind::Continue(name, expr),
                     _ => unreachable!(),
                 };
-                Some(stmt)
+                stmt
             }
             Token::Keyword(Keyword::Return) => {
                 self.bump();
@@ -165,7 +166,7 @@ impl Parser<'_, '_> {
                     let expr = self.pool.exprs.alloc(expr);
                     Some(expr)
                 };
-                Some(Statement::Return(expr))
+                StatementKind::Return(expr)
             }
             _ => {
                 let expr = self.expression()?;
@@ -173,12 +174,14 @@ impl Parser<'_, '_> {
                     let right = self.expression()?;
                     let left = self.pool.exprs.alloc(expr);
                     let right = self.pool.exprs.alloc(right);
-                    Some(Statement::Assign(left, right))
+                    StatementKind::Assign(left, right)
                 } else {
                     let expr = self.pool.exprs.alloc(expr);
-                    Some(Statement::Expr(expr))
+                    StatementKind::Expr(expr)
                 }
             }
-        }
+        };
+        let span = start.to(self.peek_ex_prev().span.hi);
+        Some(Statement { kind, span })
     }
 }

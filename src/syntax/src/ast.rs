@@ -49,7 +49,25 @@ pub enum AstKind {
 }
 
 #[derive(Clone, Copy)]
-pub enum Statement {
+pub struct Statement {
+    pub kind: StatementKind,
+    pub span: Span,
+}
+
+#[derive(Clone, Copy)]
+pub struct Expression {
+    pub kind: ExpressionKind,
+    pub span: Span,
+}
+
+#[derive(Clone, Copy)]
+pub struct Pattern {
+    pub kind: PatternKind,
+    pub span: Span,
+}
+
+#[derive(Clone, Copy)]
+pub enum StatementKind {
     Item(ItemId),
     Local(PatDeclId),
     Defer(ExprId),
@@ -61,10 +79,44 @@ pub enum Statement {
     Expr(ExprId),
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum Visibility {
-    Public,
-    Private,
+#[derive(Clone, Copy)]
+pub enum ExpressionKind {
+    Use(IdListId),
+    Literal(Literal),
+    Group(ExprId),
+    Compound(ExprListId),
+    Unary(UnaryOpKind, ExprId),
+    Binary(BinaryOpKind, ExprId, ExprId),
+    Call(ExprId, ExprListId),
+    Field(ExprId, IdId),
+    MethodCall(ExprId, IdId, ExprListId),
+    Case(ExprId, PatId),
+    Block(StmtListId, BlockValueKind), // intermediate node
+    If(ExprId, ExprId, Option<ExprId>),
+    Match(ExprId, PatListId, ExprListId),
+    Do(ExprId),
+    While(ExprId, ExprId),
+    For(PatId, ExprId, Option<ExprId>, ExprId),
+}
+
+#[derive(Clone, Copy)]
+pub enum PatternKind {
+    //Or(PatId, PatId),
+    Wildcard,
+    Rest,
+    Constant(ExprId),
+    Group(PatId),
+    Bind(Ident),
+    DotId(Ident, Option<PatId>),
+    Compound(PatListId),
+}
+
+#[derive(Clone, Copy)]
+pub struct PatternDecl {
+    pub pat: PatId,
+    pub mutable: Option<bool>,
+    pub ty: Option<ExprId>,
+    pub expr: Option<ExprId>,
 }
 
 #[derive(Clone, Copy)]
@@ -89,36 +141,10 @@ pub enum ItemBody {
     },
 }
 
-#[derive(Clone, Copy)]
-pub enum Expression {
-    Use(IdListId),
-    Literal(Literal),
-    Group(ExprId),
-    Compound(ExprListId),
-    Unary(UnaryOpKind, ExprId),
-    Binary(BinaryOpKind, ExprId, ExprId),
-    Call(ExprId, ExprListId),
-    Field(ExprId, IdId),
-    MethodCall(ExprId, IdId, ExprListId),
-    Case(ExprId, PatId),
-    Block(StmtListId, BlockValueKind), // intermediate node
-    If(ExprId, ExprId, Option<ExprId>),
-    Match(ExprId, PatListId, ExprListId),
-    Do(ExprId),
-    While(ExprId, ExprId),
-    For(PatId, ExprId, Option<ExprId>, ExprId),
-}
-
-#[derive(Clone, Copy)]
-pub enum Pattern {
-    //Or(PatId, PatId),
-    Wildcard,
-    Rest,
-    Constant(ExprId),
-    Group(PatId),
-    Bind(Ident),
-    DotId(Ident, Option<PatId>),
-    Compound(PatListId),
+#[derive(Clone, Copy, Debug)]
+pub enum Visibility {
+    Public,
+    Private,
 }
 
 #[derive(Clone, Copy)]
@@ -169,14 +195,6 @@ pub enum BinaryOpKind {
 
     AwaitFor,
     Index,
-}
-
-#[derive(Clone, Copy)]
-pub struct PatternDecl {
-    pub pat: PatId,
-    pub mutable: Option<bool>,
-    pub ty: Option<ExprId>,
-    pub expr: Option<ExprId>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -291,16 +309,16 @@ impl AstPool {
         self.items.element(id)
     }
     pub fn statement(&self, id: StmtId) -> &Statement {
-        self.stmts.element(id)
+        &self.stmts.element(id)
     }
     pub fn expression(&self, id: ExprId) -> &Expression {
-        self.exprs.element(id)
+        &self.exprs.element(id)
     }
     pub fn pattern(&self, id: PatId) -> &Pattern {
-        self.pats.element(id)
+        &self.pats.element(id)
     }
     pub fn pattern_decl(&self, id: PatDeclId) -> &PatternDecl {
-        self.patdecls.element(id)
+        &self.patdecls.element(id)
     }
     pub fn field(&self, id: FieldId) -> &Field {
         self.fields.element(id)

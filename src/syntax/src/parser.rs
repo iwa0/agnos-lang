@@ -99,7 +99,7 @@ impl<'a> LexState<'a> {
         let loc = Location {
             byte_pos: 0,
             line: 1,
-            col: 0,
+            col: 1,
         };
         let ws = WsToken {
             leading_line: true,

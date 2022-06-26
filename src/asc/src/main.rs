@@ -7,9 +7,9 @@ use syntax::{ast::ProgramBuilder, parser::Parser, token::Token};
 fn main() {
     dbg!(size_of::<syntax::ast::Item>());
     dbg!(size_of::<syntax::ast::Ast>());
-    dbg!(size_of::<syntax::ast::Statement>());
-    dbg!(size_of::<syntax::ast::Expression>());
-    dbg!(size_of::<syntax::ast::Pattern>());
+    dbg!(size_of::<syntax::ast::StatementKind>());
+    dbg!(size_of::<syntax::ast::ExpressionKind>());
+    dbg!(size_of::<syntax::ast::PatternKind>());
 
     dbg!(size_of::<syntax::ast::Id>());
     dbg!(size_of::<syntax::ast::Literal>());
@@ -50,7 +50,7 @@ fn main() {
 
 }
 
-
+#[allow(dead_code)]
 fn print_tokens(src: &str) {
     let mut pb = ProgramBuilder::new();
     let mut parser = Parser::new(&mut pb, src);
