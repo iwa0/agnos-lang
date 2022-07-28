@@ -1,13 +1,16 @@
 use std::collections::VecDeque;
 
-use crate::{
-    ast::{AstPool, ErrorInfo, ExprId, ProgramBuilder},
+use data_structures::interner::Interner;
+
+use super::{
+    ast::{AstBuilder, AstPool, Block, ErrorInfo},
     token::{self, DelimKind, Ident, Location, Span, Token, TokenEx, WsToken},
 };
 
-pub struct Parser<'a, 'b> {
-    pub(crate) pool: &'a mut AstPool,
-    state: LexState<'b>,
+pub struct Parser<'a, 'b, 'c> {
+    pub(crate) int: &'a mut Interner,
+    pub(crate) pool: &'b mut AstPool,
+    state: LexState<'c>,
     indent_level: u32,
     prev: Option<TokenEx>,
     toks: VecDeque<TokenEx>,
@@ -149,10 +152,11 @@ impl<'a> LexState<'a> {
     }
 }
 
-impl<'a, 'b> Parser<'a, 'b> {
-    pub fn new(builder: &'a mut ProgramBuilder, input: &'b str) -> Self {
+impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
+    pub fn new<'d: 'a + 'b>(builder: &'d mut AstBuilder, input: &'c str) -> Self {
         let lexer = LexState::new(input);
         let mut this = Self {
+            int: &mut builder.int,
             pool: &mut builder.pool,
             state: lexer,
             indent_level: 0,
@@ -173,11 +177,13 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
         this
     }
-    pub(crate) fn parse(pool: &'a mut ProgramBuilder, input: &'b str) -> (ExprId, Vec<ErrorInfo>) {
-        let mut this = Self::new(pool, input);
-        let expr = this.parse_block(Token::Eof).unwrap();
-        let expr = this.pool.exprs.alloc(expr);
-        (expr, this.errors)
+    pub(crate) fn parse<'d: 'a + 'b>(
+        builder: &'d mut AstBuilder,
+        input: &'c str,
+    ) -> (Block, Vec<ErrorInfo>) {
+        let mut this = Self::new(builder, input);
+        let block = this.parse_block(Token::Eof).unwrap();
+        (block, this.errors)
     }
 
     pub fn report_span(&mut self, msg: String, span: Span) {
@@ -288,7 +294,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 }
 
-impl Parser<'_, '_> {
+impl Parser<'_, '_, '_> {
     // [Indent? Token? (Dedent+ NewLine | NewLine)?] [Dedent] Eof
     fn next_token(&mut self) -> TokenEx {
         /*
@@ -543,7 +549,7 @@ impl Parser<'_, '_> {
                     } else {
                         match self.state.next_char() {
                             '"' => {
-                                let intern = self.pool.interner.intern(
+                                let intern = self.int.intern(
                                     self.state.input[start as usize..end as usize].as_bytes(),
                                 );
                                 break Quote(intern);
@@ -594,8 +600,8 @@ impl Parser<'_, '_> {
                         "await" => Keyword(Await),
                         "in" => Keyword(In),
                         _ => {
-                            let intern = self.pool.interner.intern(s.as_bytes());
-                            Ident(crate::token::Ident(intern))
+                            let intern = self.int.intern(s.as_bytes());
+                            Ident(super::token::Ident(intern))
                         }
                     }
                 }
@@ -607,7 +613,7 @@ impl Parser<'_, '_> {
                 let end = self.state.loc.byte_pos;
                 let s = &self.state.input[start_loc.byte_pos as usize..end as usize];
                 if let Ok(n) = u64::from_str_radix(s, 10) {
-                    let intern = self.pool.interner.intern(&n.to_le_bytes());
+                    let intern = self.int.intern(&n.to_le_bytes());
                     Number(intern)
                 } else {
                     self.report("number is too big".to_string());

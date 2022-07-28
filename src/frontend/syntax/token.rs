@@ -25,7 +25,7 @@ pub struct WsToken {
     pub leading_spaces: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct Ident(pub(crate) Intern);
 
 #[derive(Clone, Copy, Debug, PartialEq)]

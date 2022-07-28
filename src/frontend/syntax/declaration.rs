@@ -1,8 +1,99 @@
-use crate::ast::{Field, Pattern, PatternDecl, PatternKind};
-use crate::parser::Parser;
-use crate::token::{DelimKind, Token};
+use super::ast::{Field, Item, ItemBody, Pattern, PatternDecl, PatternKind, Visibility};
+use super::parser::Parser;
+use super::token::{DelimKind, Keyword, Token};
 
-impl Parser<'_, '_> {
+impl Parser<'_, '_, '_> {
+    pub(crate) fn item(&mut self) -> Option<Item> {
+        let kw = match self.peek_prev() {
+            Token::Keyword(
+                kw @ (Keyword::Const
+                | Keyword::Module
+                | Keyword::Struct
+                | Keyword::Union
+                | Keyword::Enum
+                | Keyword::Func),
+            ) => kw,
+            _ => panic!(),
+        };
+        let vis = if self.accept(Token::Star) {
+            Visibility::Public
+        } else {
+            Visibility::Private
+        };
+        let name = self.expect_ident()?;
+        let generics = if self.accept(Token::Lt) {
+            let mut params = Vec::new();
+            while !matches!(self.peek(), Token::Gt) {
+                let param = self.param_generic().unwrap();
+                params.push(param);
+                if !self.accept(Token::Comma) {
+                    break;
+                }
+            }
+            self.expect(Token::Gt);
+            let params = self.pool.patdecls.alloc_with(params.into_iter());
+            Some(params)
+        } else {
+            None
+        };
+        let body = match kw {
+            Keyword::Const => {
+                self.expect(Token::Eq);
+                let expr = self.expression()?;
+                let expr = self.pool.exprs.alloc(expr);
+                ItemBody::Const(expr)
+            }
+            Keyword::Module => {
+                let body = self.line_block()?;
+                let body = self.pool.exprs.alloc(body);
+                ItemBody::Module(body)
+            }
+            Keyword::Struct => {
+                self.expect(Token::NewLine);
+                let fields = self.field_list();
+                let fields = self.pool.fields.alloc_with(fields.into_iter());
+                ItemBody::Struct(fields)
+            }
+            Keyword::Union => {
+                self.expect(Token::NewLine);
+                let fields = self.field_list();
+                let fields = self.pool.fields.alloc_with(fields.into_iter());
+                ItemBody::Union(fields)
+            }
+            Keyword::Enum => {
+                self.expect(Token::NewLine);
+                let decls = self.enum_member_list();
+                let decls = self.pool.patdecls.alloc_with(decls.into_iter());
+                ItemBody::Enum(decls)
+            }
+            Keyword::Func => {
+                let params = self.parse_comma(DelimKind::Paren, Self::param_func);
+                let ret_ty = if !matches!(self.peek(), Token::NewLine) {
+                    let ty = self.type_expr()?;
+                    let ty = self.pool.exprs.alloc(ty);
+                    Some(ty)
+                } else {
+                    None
+                };
+                let body = self.line_block()?;
+                let params = self.pool.patdecls.alloc_with(params.into_iter());
+                let body = self.pool.exprs.alloc(body);
+                ItemBody::Func {
+                    params,
+                    ret_ty,
+                    body,
+                }
+            }
+            _ => unreachable!(),
+        };
+        Some(Item {
+            vis,
+            name,
+            generics,
+            body,
+        })
+    }
+
     pub(crate) fn bind_pattern(&mut self) -> Option<Pattern> {
         let start = self.peek_ex().span.lo;
         let kind = match self.peek() {
@@ -113,13 +204,12 @@ impl Parser<'_, '_> {
         } else {
             None
         };
-        Some(PatternDecl  {
-                pat,
-                mutable,
-                ty,
-                expr,
-            }
-        )
+        Some(PatternDecl {
+            pat,
+            mutable,
+            ty,
+            expr,
+        })
     }
 
     pub(crate) fn field_list(&mut self) -> Vec<Field> {

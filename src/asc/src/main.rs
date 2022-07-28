@@ -1,15 +1,14 @@
-use std::{
-    mem::size_of,
-    path::PathBuf,
+use frontend::{
+    syntax::{self, ast::AstBuilder, parser::Parser, token::Token},
 };
-use syntax::{ast::ProgramBuilder, parser::Parser, token::Token};
+use std::{mem::size_of, path::PathBuf};
 
 fn main() {
+    dbg!(size_of::<syntax::ast::SourceFile>());
     dbg!(size_of::<syntax::ast::Item>());
-    dbg!(size_of::<syntax::ast::Ast>());
-    dbg!(size_of::<syntax::ast::StatementKind>());
-    dbg!(size_of::<syntax::ast::ExpressionKind>());
-    dbg!(size_of::<syntax::ast::PatternKind>());
+    dbg!(size_of::<syntax::ast::Statement>());
+    dbg!(size_of::<syntax::ast::Expression>());
+    dbg!(size_of::<syntax::ast::Pattern>());
 
     dbg!(size_of::<syntax::ast::Id>());
     dbg!(size_of::<syntax::ast::Literal>());
@@ -20,8 +19,8 @@ fn main() {
     path.push("as-src");
 
     if true {
-        let mut pb = ProgramBuilder::new();
-        fn traverse_dir(dir: PathBuf, pb: &mut ProgramBuilder) {
+        let mut pb = AstBuilder::new();
+        fn traverse_dir(dir: PathBuf, pb: &mut AstBuilder) {
             for e in std::fs::read_dir(dir).unwrap() {
                 let e = e.unwrap();
                 let ty = e.file_type().unwrap();
@@ -44,15 +43,14 @@ fn main() {
             }
         }
         traverse_dir(path, &mut pb);
-        let program = pb.into_program();
-        println!("{}", program.dump().as_str());
+        let (mut ast, mut int) = pb.into_ast_int();
+        println!("{}", ast.dump(&int).as_str());
     }
-
 }
 
 #[allow(dead_code)]
 fn print_tokens(src: &str) {
-    let mut pb = ProgramBuilder::new();
+    let mut pb = AstBuilder::new();
     let mut parser = Parser::new(&mut pb, src);
     loop {
         let tok = parser.peek_ex();

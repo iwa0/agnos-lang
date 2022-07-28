@@ -1,13 +1,13 @@
-use crate::{
+use super::{
     ast::{
-        Apply, BinaryOpKind, BlockValueKind, ExprListId, Expression, ExpressionKind, Id, IdListId,
-        Literal, Statement, StatementKind, UnaryOpKind,
+        Apply, BinaryOpKind, Block, BlockKind, Expression, ExpressionKind, Id, Literal, Name,
+        Resolvable, Statement, StatementKind, UnaryOpKind,
     },
     parser::Parser,
     token::{DelimKind, Keyword, Token},
 };
 
-impl Parser<'_, '_> {
+impl Parser<'_, '_, '_> {
     fn mk_unop(&mut self, kind: UnaryOpKind, op: Expression) -> ExpressionKind {
         let op = self.pool.exprs.alloc(op);
         ExpressionKind::Unary(kind, op)
@@ -28,24 +28,13 @@ impl Parser<'_, '_> {
     }
 
     pub(crate) fn type_expr(&mut self) -> Option<Expression> {
-        let start = self.peek_ex().span.lo;
-        let kind = match self.peek() {
-            Token::Ident(_) => {
-                let ids = self.id_list_and_alloc(false)?;
-                ExpressionKind::Use(ids)
-            }
-            Token::Dot => {
-                self.bump();
-                let (ids, exprs) = self.dot_id_list_and_alloc(false)?;
-                ExpressionKind::Literal(Literal::DotId(ids, exprs))
-            }
+        match self.peek() {
+            Token::Ident(_) | Token::Dot => self.atom_expr(),
             _ => {
                 self.report("unknown type expression token".to_string());
-                return None;
+                None
             }
-        };
-        let span = start.to(self.peek_ex_prev().span.hi);
-        Some(Expression { kind, span })
+        }
     }
 
     pub(crate) fn id_list(&mut self, disambiguate: bool) -> Vec<Id> {
@@ -53,11 +42,17 @@ impl Parser<'_, '_> {
         let mut list = Vec::new();
         while let Some(id) = self.expect_ident() {
             if let Token::Ident(_) = self.peek() {
-                if let Some(arg) = self.id_list_and_alloc(disambiguate) {
-                    list.push(Id {
-                        id,
+                let arg = self.atom_expr();
+                if let Some(arg) = arg {
+                    let arg = self.pool.exprs.alloc(arg);
+                    let id = Id {
+                        id: Resolvable {
+                            id,
+                            name: Name::Unresolved,
+                        },
                         apply: Some(Apply::Juxtaposition(arg)),
-                    });
+                    };
+                    list.push(id);
                 }
                 break;
             }
@@ -77,16 +72,28 @@ impl Parser<'_, '_> {
                 self.expect(Token::Gt);
                 let args = self.pool.exprs.alloc_with(args.into_iter());
                 Id {
-                    id,
+                    id: Resolvable {
+                        id,
+                        name: Name::Unresolved,
+                    },
                     apply: Some(Apply::AngleBrackets(args)),
                 }
             } else if excl_mark {
                 Id {
-                    id,
+                    id: Resolvable {
+                        id,
+                        name: Name::Unresolved,
+                    },
                     apply: Some(Apply::Infer),
                 }
             } else {
-                Id { id, apply: None }
+                Id {
+                    id: Resolvable {
+                        id,
+                        name: Name::Unresolved,
+                    },
+                    apply: None,
+                }
             };
             list.push(id);
 
@@ -97,37 +104,17 @@ impl Parser<'_, '_> {
         list
     }
 
-    pub(crate) fn id_list_and_alloc(&mut self, disambiguate: bool) -> Option<IdListId> {
-        let ids = self.id_list(disambiguate);
-        let ids = self.pool.ids.alloc_with(ids.into_iter());
-        Some(ids)
-    }
-
-    pub(crate) fn dot_id_list_and_alloc(
-        &mut self,
-        disambiguate: bool,
-    ) -> Option<(IdListId, Option<ExprListId>)> {
-        assert!(matches!(self.peek_prev(), Token::Dot));
-        let ids = self.id_list_and_alloc(disambiguate)?;
-        if let Token::OpenDelim(DelimKind::Curly) = self.peek() {
-            let list = self.parse_comma(DelimKind::Curly, Self::expression);
-            let list = self.pool.exprs.alloc_with(list.into_iter());
-            Some((ids, Some(list)))
-        } else {
-            Some((ids, None))
-        }
-    }
-
     fn atom_expr(&mut self) -> Option<Expression> {
         let start = self.peek_ex().span.lo;
         let kind = match self.peek() {
             Token::Ident(_) => {
-                let ids = self.id_list_and_alloc(true)?;
+                let ids = self.id_list(true);
+                let ids = self.pool.ids.alloc_with(ids.into_iter());
                 ExpressionKind::Use(ids)
             }
             Token::Number(n) => {
                 self.bump();
-                let bytes = self.pool.interner.get(n).split_array_ref::<8>().0;
+                let bytes = self.int.get(n).split_array_ref::<8>().0;
                 let n = u64::from_le_bytes(*bytes);
                 ExpressionKind::Literal(Literal::Number(n))
             }
@@ -141,8 +128,16 @@ impl Parser<'_, '_> {
             }
             Token::Dot => {
                 self.bump();
-                let (path, exprs) = self.dot_id_list_and_alloc(true)?;
-                ExpressionKind::Literal(Literal::DotId(path, exprs))
+                let ids = self.id_list(true);
+                let ids = self.pool.ids.alloc_with(ids.into_iter());
+                let lit = if let Token::OpenDelim(DelimKind::Curly) = self.peek() {
+                    let list = self.parse_comma(DelimKind::Curly, Self::expression);
+                    let list = self.pool.exprs.alloc_with(list.into_iter());
+                    Literal::DotId(ids, Some(list))
+                } else {
+                    Literal::DotId(ids, None)
+                };
+                ExpressionKind::Literal(lit)
             }
             Token::OpenDelim(DelimKind::Paren) => {
                 self.bump();
@@ -384,20 +379,35 @@ impl Parser<'_, '_> {
                         self.bump();
                         match self.peek() {
                             Token::Ident(_) => {
+                                let span = self.peek_ex().span;
                                 let first_arg = self.pool.exprs.alloc(op);
                                 let ids = self.id_list(true);
-                                if ids.len() != 1 {
-                                    self.report("expected single id".to_string());
+                                let id = if ids.len() == 1 {
+                                    ids[0]
                                 } else {
+                                    self.report_span("expected single id".to_string(), span);
                                     return None;
-                                }
-                                let name = self.pool.ids.alloc(ids[0]);
+                                };
+
                                 if let Token::OpenDelim(DelimKind::Paren) = self.peek() {
                                     let args = self.parse_comma(DelimKind::Paren, Self::expression);
                                     let args = self.pool.exprs.alloc_with(args.into_iter());
-                                    ExpressionKind::MethodCall(first_arg, name, args)
+                                    let method = self.pool.ids.alloc(id);
+                                    ExpressionKind::MethodCall(first_arg, method, args)
                                 } else {
-                                    ExpressionKind::Field(first_arg, name)
+                                    if id.apply.is_some() {
+                                        self.report_span(
+                                            "field may not have generic parameters".to_string(),
+                                            span,
+                                        );
+                                    }
+                                    ExpressionKind::Field(
+                                        first_arg,
+                                        Resolvable {
+                                            id: id.id.id,
+                                            name: Name::Unresolved,
+                                        },
+                                    )
                                 }
                             }
                             _ => {
@@ -434,7 +444,7 @@ impl Parser<'_, '_> {
         if let Token::NewLine = self.peek() {
             self.bump();
             self.expect(Token::OpenDelim(DelimKind::Indentation));
-            self.parse_block(Token::CloseDelim(DelimKind::Indentation))
+            self.parse_block_as_expr(Token::CloseDelim(DelimKind::Indentation))
         } else {
             self.expression()
         }
@@ -455,11 +465,20 @@ impl Parser<'_, '_> {
             }
         }
         self.expect(Token::OpenDelim(DelimKind::Indentation));
-        self.parse_block(Token::CloseDelim(DelimKind::Indentation))
+        self.parse_block_as_expr(Token::CloseDelim(DelimKind::Indentation))
     }
 
-    pub(crate) fn parse_block(&mut self, terminator: Token) -> Option<Expression> {
+    fn parse_block_as_expr(&mut self, terminator: Token) -> Option<Expression> {
         let start = self.peek_ex().span.lo;
+        let blk = self.parse_block(terminator)?;
+        let span = start.to(self.peek_ex_prev().span.hi);
+        Some(Expression {
+            kind: ExpressionKind::Block(blk),
+            span,
+        })
+    }
+
+    pub(crate) fn parse_block(&mut self, terminator: Token) -> Option<Block> {
         let mut last_semi_span = None;
         let mut trailing_semi = false;
         let mut stmts = Vec::new();
@@ -494,29 +513,25 @@ impl Parser<'_, '_> {
             }
         }
         self.expect(terminator);
-        let r = if trailing_semi {
-            BlockValueKind::Trailing
+        let kind = if trailing_semi {
+            BlockKind::Trailing
         } else if let Some(&Statement {
             kind: StatementKind::Expr(expr),
             ..
         }) = stmts.last()
         {
-            match self.pool.expression(expr).kind {
+            match self.pool.exprs[expr].kind {
                 ExpressionKind::Do(_)
                 | ExpressionKind::For(..)
                 | ExpressionKind::While(..)
                 | ExpressionKind::If(..)
-                | ExpressionKind::Match(..) => BlockValueKind::Trailing,
-                _ => BlockValueKind::Void,
+                | ExpressionKind::Match(..) => BlockKind::Trailing,
+                _ => BlockKind::Void,
             }
         } else {
-            BlockValueKind::Void
+            BlockKind::Void
         };
         let stmts = self.pool.stmts.alloc_with(stmts.into_iter());
-        let span = start.to(self.peek_ex_prev().span.hi);
-        Some(Expression {
-            kind: ExpressionKind::Block(stmts, r),
-            span,
-        })
+        Some(Block { stmts, kind })
     }
 }

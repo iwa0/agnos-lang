@@ -1,6 +1,6 @@
 
 do
-    var v = 123;
+    var avar = 123;
 
 if x>5
     x - 1;

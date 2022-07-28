@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap},
-    num::NonZeroU32,
-};
+use std::{collections::HashMap, num::NonZeroU32};
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct Intern(NonZeroU32);
@@ -35,6 +32,9 @@ impl Interner {
             id
         }
     }
+    pub fn intern_immut(&self, s: &[u8]) -> Result<Intern, ()> {
+        self.interns.get(s).map(|a| *a).ok_or(())
+    }
     pub fn get(&self, id: Intern) -> &[u8] {
         Self::pool_get(&self.pool, id)
     }
@@ -55,7 +55,7 @@ impl Interner {
             buf.add(words - 1).write(0);
             buf.write(s.len() as u32);
             s.as_ptr().copy_to(buf.add(1) as *mut u8, s.len());
-            
+
             Intern(NonZeroU32::new_unchecked((old_len + 1) as u32))
         }
     }
