@@ -3,11 +3,11 @@ use std::{
     hash::Hash,
     marker::PhantomData,
     num::NonZeroU32,
-    ops::Index,
+    ops::{Index, IndexMut},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct IndexVec<Idx: IndexAccessor>(Vec<Idx::T>, PhantomData<Idx>);
+pub struct IndexVec<T>(Vec<T>, PhantomData<T>);
 
 pub struct ElementIndex<T>(ElementIndexInner, PhantomData<T>);
 
@@ -134,7 +134,7 @@ impl<T> SliceIndex<T> {
         unsafe { self.nth_unchecked(n) }
     }
     pub fn start_index(self) -> usize {
-        self.0 .0.get().wrapping_sub(1) as usize
+        self.0 .0.get().wrapping_sub(1) as _
     }
     pub fn len(self) -> usize {
         self.0.len()
@@ -187,48 +187,70 @@ impl<T> IndexAccessor for SliceIndex<T> {
     }
 }
 
-impl<Idx: IndexAccessor> IndexVec<Idx> {
+impl<T> IndexVec<T> {
+    
     pub fn new() -> Self {
         Self(Vec::new(), PhantomData)
     }
-    fn index_as_nz32(&self, n: usize) -> NonZeroU32 {
-        let len = self.len() - n + 1;
-        NonZeroU32::new(len as u32).unwrap()
-    }
+    
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    pub fn last_id(&self) -> ElementIndex<Idx::T> {
-        let idx = self.index_as_nz32(1);
-        let inner = ElementIndexInner(idx);
-        ElementIndex(inner, PhantomData)
+    
+    fn minus_index_as_nz32(&self, n: usize) -> NonZeroU32 {
+        let idx = self.len() - n + 1;
+        NonZeroU32::new(idx as u32).unwrap()
     }
-    pub fn last_n_id(&self, n: usize) -> SliceIndex<Idx::T> {
-        let idx = self.index_as_nz32(n);
-        let inner = SliceIndexInner(idx, n as u32);
-        SliceIndex(inner, PhantomData)
+    
+    pub fn next_id(&self) -> ElementIndex<T> {
+        let idx = self.minus_index_as_nz32(0);
+        ElementIndex(ElementIndexInner(idx), PhantomData)
+    }
+    pub fn next_id_n(&self, n: usize) -> SliceIndex<T> {
+        let idx = self.minus_index_as_nz32(0);
+        SliceIndex(SliceIndexInner(idx, n as u32), PhantomData)
     }
 
-    pub fn push(&mut self, v: Idx::T) {
-        self.0.push(v);
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.0.iter()
     }
-    pub fn alloc(&mut self, v: Idx::T) -> ElementIndex<Idx::T> {
-        self.push(v);
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
+        self.0.iter_mut()
+    }
+
+    fn last_id(&self) -> ElementIndex<T> {
+        let idx = self.minus_index_as_nz32(1);
+        ElementIndex(ElementIndexInner(idx), PhantomData)
+    }
+    fn last_n_id(&self, n: usize) -> SliceIndex<T> {
+        let idx = self.minus_index_as_nz32(n);
+        SliceIndex(SliceIndexInner(idx, n as u32), PhantomData)
+    }
+
+    pub fn alloc(&mut self, v: T) -> ElementIndex<T> {
+        self.0.push(v);
         self.last_id()
     }
-    pub fn alloc_with<I: Iterator<Item = Idx::T>>(&mut self, it: I) -> SliceIndex<Idx::T> {
+    pub fn alloc_with<I: Iterator<Item = T>>(&mut self, it: I) -> SliceIndex<T> {
         let mut len = 0;
         for v in it {
-            self.push(v);
+            self.0.push(v);
             len += 1;
         }
         self.last_n_id(len)
     }
 }
 
-impl<I: IndexAccessor, II: IndexAccessor<T = I::T>> Index<II> for IndexVec<I> {
-    type Output = II::Output;
-    fn index(&self, index: II) -> &Self::Output {
-        II::get(self.0.as_slice(), index)
+impl<T, I: IndexAccessor<T = T>> Index<I> for IndexVec<T> {
+    type Output = I::Output;
+    fn index(&self, index: I) -> &Self::Output {
+        I::get(self.0.as_slice(), index)
+    }
+}
+
+impl<T, I: IndexAccessor<T = T>> IndexMut<I> for IndexVec<T> {
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        I::get_mut(self.0.as_mut_slice(), index)
     }
 }

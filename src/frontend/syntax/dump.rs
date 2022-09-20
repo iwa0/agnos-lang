@@ -1,58 +1,106 @@
-use std::collections::HashMap;
-
 use data_structures::{
     indexvec::ElementIndex,
     interner::Interner,
-    tree::{Node, TreeBuilder, TreeDumper},
+    tree::{TreeBuilder, TreeDumper},
 };
 
-use crate::{
-    syntax::ast::ErrorInfo,
-};
+use crate::semantic::{name_analysis::ScopeId, sema::Sema, symbol_table::AstNodeId};
 
 use super::{
     ast::{
-        Apply, Ast, AstNodeId, AstPool, AstWithInterner, Block, ExprId, ExpressionKind, FieldId,
-        IdId, IdListId, ItemBody, ItemId, Literal, PatDeclId, PatId, PatternKind, SourceFileId,
-        SourceFileListId, StatementKind, StmtId,
+        Apply, Ast, AstPool, Block, ConstItem, EnumItem, ExprId, ExpressionKind, FieldId, FuncItem,
+        IdId, IdListId, ItemId, ItemKind, Literal, ModuleItem, PatDeclId, PatId, PatternKind,
+        SourceFileId, StatementKind, StmtId, StructItem, UnionItem,
     },
     ast_visitor::AstVisitor,
-    token::{Ident, Span},
+    token::{rd_ident, Ident, Span},
 };
 
+/*impl SymbolTable {
+    pub fn dump(&self, ast_int: AstWithInterner) -> String {
+        let mut dump_tree = TreeBuilder::new();
 
-impl Ast {
-    pub fn dump(&self, int: &Interner) -> String {
-        let mut ast_dump_tree = AstDumpTree {
-            ast_int: AstWithInterner { ast: self, int },
-            tree: TreeBuilder::new(),
-        };
-        ast_dump_tree.visit_root(self.root);
-        let ast_root = ast_dump_tree.tree.as_root();
+        let mut map_by_scope = HashMap::new();
+        for (&id, entries) in &self.table {
+            for e in entries {
+                map_by_scope
+                    .entry(self.symbol(*e).scope_no)
+                    .or_insert_with(Vec::new)
+                    .push((id, self.symbol(*e).backref));
+            }
+        }
 
-        fn err2str(dump_tree: &mut TreeBuilder<String>, tree: &[Node<Option<ErrorInfo>>]) {
-            dump_tree.push("ErrorInfo".to_string());
-            for err in tree {
-                match &err.data {
-                    Some(err) => {
-                        dump_tree.push(err.msg.clone());
-                        dump_tree.add(format!(
-                            "Span({}:{} - {}:{}",
-                            err.span.lo.line, err.span.lo.col, err.span.hi.line, err.span.hi.col
-                        ));
-                        dump_tree.pop();
-                    }
-                    None => {
-                        err2str(dump_tree, &err.children);
-                    }
-                }
+        dump_tree.push("MapByScope".to_string());
+        for (&scope, entries) in &map_by_scope {
+            dump_tree.push(format!("Scope({})", scope));
+            for &(id, node) in entries {
+                let s_id = ast_int.int.get(id.0);
+                let s_id = std::str::from_utf8(s_id).unwrap();
+                dump_tree.push(format!("Symbol({})", s_id));
+                dump_ast_node_id(&mut dump_tree, &ast_int, node);
+                dump_tree.pop();
             }
             dump_tree.pop();
         }
+        dump_tree.pop();
 
-        let mut dumped_err = TreeBuilder::new();
-        err2str(&mut dumped_err, &self.errs);
-        let err_root = dumped_err.into_root("Errors".to_string());
+        dump_tree.push("MapBySymbol".to_string());
+        for (&id, entries) in &self.table {
+            let s_id = ast_int.int.get(id.0);
+            let s_id = std::str::from_utf8(s_id).unwrap();
+            dump_tree.push(format!("Symbol({})", s_id));
+            for e in entries {
+                dump_tree.push("Entry".to_string());
+                dump_ast_node_id(&mut dump_tree, &ast_int, self.symbol(*e).backref);
+                dump_tree.add(format!("Scope({})", self.symbol(*e).scope_no));
+                dump_tree.pop();
+            }
+            dump_tree.pop();
+        }
+        dump_tree.pop();
+
+        let root = dump_tree.into_root("SymbolTable".to_string());
+        TreeDumper::dump(&root)
+    }
+}*/
+
+impl Sema {
+    pub fn dump(&self) -> String {
+        let mut ast_dump_tree = AstDumpTree {
+            sema: self,
+            tree: TreeBuilder::new(),
+        };
+        ast_dump_tree.visit_root();
+        let ast_root = ast_dump_tree.tree.as_root();
+
+        /*
+        let mut sym_tbl_dump = TreeBuilder::new();
+        for a in self.symbol_table {
+            todo!()
+        }
+
+        let mut scope_dump = TreeBuilder::new();
+        for a in self.scopes /*??*/ {
+            todo!()
+        }
+        */
+
+        let mut err_dump = TreeBuilder::new();
+        for &(id, ref errs) in &self.errors {
+            let file = self.ast.files[id];
+            let name = rd_ident(&self.interner, file.name.t);
+            err_dump.push(format!("FileErrors({} - {})", name, id.index()));
+            for err in errs {
+                err_dump.push(err.msg.clone());
+                err_dump.add(format!(
+                    "Span({}:{} ~ {}:{})",
+                    err.span.lo.line, err.span.lo.col, err.span.hi.line, err.span.hi.col
+                ));
+                err_dump.pop();
+            }
+            err_dump.pop();
+        }
+        let err_root = err_dump.into_root("Errors".to_string());
 
         let mut root = TreeBuilder::new();
         root.add_node(ast_root);
@@ -64,26 +112,27 @@ impl Ast {
 
 fn dump_ast_node_id(tree: &mut TreeBuilder<String>, _: &AstPool, id: AstNodeId) {
     let ref_desc = match id {
-        AstNodeId::Root => format!("Root"),
-        AstNodeId::SourceFile(id) => format!("SourceFile({})", id.index()),
+        AstNodeId::Null => format!("Unresolved"),
+        AstNodeId::File(id) => format!("SourceFile({})", id.index()),
         AstNodeId::Item(id) => format!("Item({})", id.index()),
-        AstNodeId::Stmt(id) => format!("Statement({})", id.index()),
-        AstNodeId::Expr(id) => format!("Expression({})", id.index()),
-        AstNodeId::Pat(id) => format!("Pattern({})", id.index()),
-        //AstNodeId::Local(id) => format!("Local({})", id.index()),
-        //AstNodeId::Param(id) => format!("Param({})", id.index()),
-        //AstNodeId::EnumField(id) => format!("EnumField({})", id.index()),
+        //AstNodeId::Stmt(id) => format!("Statement({})", id.index()),
+        //AstNodeId::Expr(id) => format!("Expression({})", id.index()),
+        AstNodeId::Local(id) => format!("Local({})", id.index()),
+        AstNodeId::Param(id) => format!("Param({})", id.index()),
+        AstNodeId::GenericParam(id) => format!("GenericParam({})", id.index()),
+        AstNodeId::Enumerator(id) => format!("Enumerator({})", id.index()),
+        AstNodeId::Variant(id) => format!("Variant({})", id.index()),
         AstNodeId::Field(id) => format!("Field({})", id.index()),
     };
     tree.add(format!("AstRef <{}>", ref_desc));
 }
 
-struct AstDumpTree<'a, 'b> {
-    ast_int: AstWithInterner<'a, 'b>,
+struct AstDumpTree<'a> {
+    sema: &'a Sema,
     tree: TreeBuilder<String>,
 }
 
-impl AstDumpTree<'_, '_> {
+impl AstDumpTree<'_> {
     fn push_name_str(&mut self, name: &str) -> &mut Self {
         self.push_name(name.to_string())
     }
@@ -121,28 +170,24 @@ impl AstDumpTree<'_, '_> {
         self.tree.add(name);
         self
     }
-    fn _name_str(&mut self, name: &str) -> &mut Self {
-        self.name(name.to_string())
-    }
 }
 
-impl AstVisitor<()> for AstDumpTree<'_, '_> {
+impl AstVisitor<()> for AstDumpTree<'_> {
     fn ast(&self) -> &Ast {
-        self.ast_int.ast
+        &self.sema.ast
     }
     fn int(&self) -> &Interner {
-        self.ast_int.int
+        &self.sema.interner
     }
 
-    fn visit_root(&mut self, id: SourceFileListId) {
+    fn visit_root(&mut self) {
         self.push_name_str("Ast");
-        self.traverse().visit_root(id);
+        self.traverse().visit_root();
         self.pop_name();
     }
 
     fn visit_ident(&mut self, id: Ident) {
-        let s = self.int().get(id.0);
-        let s = std::str::from_utf8(s).unwrap();
+        let s = rd_ident(self.int(), id);
         self.tree.add(format!("Ident({})", s));
         self.traverse().visit_ident(id)
     }
@@ -158,7 +203,6 @@ impl AstVisitor<()> for AstDumpTree<'_, '_> {
         match elem.apply {
             Some(Apply::Juxtaposition(_)) => self.push_name_id("Id::Juxtaposition", id),
             Some(Apply::AngleBrackets(_)) => self.push_name_id("Id::AngleBrackets", id),
-            Some(Apply::Infer) => self.push_name_id("Id::Infer", id),
             None => self.push_name_id("Id", id),
         };
         self.traverse().visit_id(id);
@@ -173,13 +217,13 @@ impl AstVisitor<()> for AstDumpTree<'_, '_> {
 
     fn visit_item(&mut self, id: ItemId) {
         let elem = self.ast().items[id];
-        match elem.body {
-            ItemBody::Const(_) => self.push_name_id("Const", id),
-            ItemBody::Module(_) => self.push_name_id("Module", id),
-            ItemBody::Struct(_) => self.push_name_id("Struct", id),
-            ItemBody::Union(_) => self.push_name_id("Union", id),
-            ItemBody::Enum(_) => self.push_name_id("Enum", id),
-            ItemBody::Func { .. } => self.push_name_id("Func", id),
+        match elem.kind {
+            ItemKind::Const(ConstItem(_, _)) => self.push_name_id("Const", id),
+            ItemKind::Module(ModuleItem(_, sub)) => self.push_name_id("Module", id),
+            ItemKind::Struct(StructItem(_, sub)) => self.push_name_id("Struct", id),
+            ItemKind::Union(UnionItem(_, sub)) => self.push_name_id("Union", id),
+            ItemKind::Enum(EnumItem(_, sub)) => self.push_name_id("Enum", id),
+            ItemKind::Func(FuncItem(_, _, _)) => self.push_name_id("Func", id),
         };
         self.name(format!("{:?}", elem.vis));
         self.traverse().visit_item(id);
@@ -209,7 +253,7 @@ impl AstVisitor<()> for AstDumpTree<'_, '_> {
         self.push_name_id_span("Expression", id, elem.span);
         let mut pops = 2;
         let _ = match elem.kind {
-            ExpressionKind::Use(_) => self.push_name_str("Use"),
+            ExpressionKind::Use(_, scope) => self.push_name(format!("Use(in {:?})", scope.index())),
             ExpressionKind::Literal(lit) => {
                 self.push_name_str("Literal");
                 match lit {
@@ -228,8 +272,11 @@ impl AstVisitor<()> for AstDumpTree<'_, '_> {
             }
             ExpressionKind::Group(_) => self.push_name_str("Group"),
             ExpressionKind::Compound(_) => self.push_name_str("Compound"),
-            ExpressionKind::Unary(kind, _) => self.push_name(format!("Unary({:?})", kind)),
-            ExpressionKind::Binary(kind, _, _) => self.push_name(format!("Binary({:?})", kind)),
+            ExpressionKind::Unary(kind, _) => self.push_name(format!("Unary({:?})", kind.t)),
+            ExpressionKind::Binary(kind, _, _) => self.push_name(format!("Binary({:?})", kind.t)),
+            ExpressionKind::Try(_) => self.push_name_str("Try"),
+            ExpressionKind::Yield(_) => self.push_name_str("Yield"),
+            ExpressionKind::Await(_, _) => self.push_name_str("Await"),
             ExpressionKind::Call(_, _) => self.push_name_str("Call"),
             ExpressionKind::Field(_, _) => self.push_name_str("Field"),
             ExpressionKind::MethodCall(_, _, _) => self.push_name_str("MethodCall"),
@@ -257,7 +304,14 @@ impl AstVisitor<()> for AstDumpTree<'_, '_> {
             PatternKind::Rest => self.push_name_str("Rest"),
             PatternKind::Constant(_) => self.push_name_str("Constant"),
             PatternKind::Group(_) => self.push_name_str("Group"),
-            PatternKind::Bind(_) => self.push_name_str("Bind"),
+            PatternKind::Bind(kind, _) => {
+                self.push_name_str("Bind");
+                if let Some(kind) = kind {
+                    self.name(format!("Qualifier({:?})", kind))
+                } else {
+                    &mut *self
+                }
+            }
             PatternKind::DotId(_, _) => self.push_name_str("DotId"),
             PatternKind::Compound(_) => self.push_name_str("Compound"),
         };
@@ -284,9 +338,15 @@ impl AstVisitor<()> for AstDumpTree<'_, '_> {
         self.pop_name();
     }
 
-    fn visit_enum_field(&mut self, id: PatDeclId) -> () {
+    fn visit_enumerator(&mut self, id: PatDeclId) -> () {
         self.push_name_id("EnumField", id);
-        self.traverse().visit_enum_field(id);
+        self.traverse().visit_enumerator(id);
+        self.pop_name();
+    }
+
+    fn visit_variant(&mut self, id: FieldId) {
+        self.push_name_id("Variant", id);
+        self.traverse().visit_variant(id);
         self.pop_name();
     }
 

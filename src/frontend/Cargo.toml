@@ -10,3 +10,4 @@ path = "lib.rs"
 
 [dependencies]
 data_structures={path="../data_structures"}
+typed-arena = "2.0.1"

@@ -1,4 +1,4 @@
-use data_structures::interner::Intern;
+use data_structures::interner::{Intern, Interner};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TokenEx {
@@ -26,7 +26,17 @@ pub struct WsToken {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub struct Ident(pub(crate) Intern);
+pub struct Ident(Intern);
+
+pub fn mk_ident(int: &mut Interner, s: &str) -> Ident {
+    let a = int.intern(s.as_bytes());
+    Ident(a)
+}
+
+pub fn rd_ident(int: &Interner, id: Ident) -> &str {
+    let s = int.get(id.0);
+    std::str::from_utf8(s).unwrap()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Token {
@@ -93,12 +103,11 @@ pub enum Keyword {
     Struct,
     Union,
     Enum,
-    Func,
-    Type,
+    Fn,
     Const,
 
+    Mut,
     Let,
-    Var,
     Break,
     Continue,
     Return,

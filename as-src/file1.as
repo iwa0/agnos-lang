@@ -1,6 +1,6 @@
 
 do
-    var avar = 123;
+    let mut avar = 123;
 
 if x>5
     x - 1;

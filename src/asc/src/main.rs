@@ -1,9 +1,10 @@
 use frontend::{
-    syntax::{self, ast::AstBuilder, parser::Parser, token::Token},
+    syntax::{self, ast::SemaBuilder, parser::Parser, token::Token},
 };
 use std::{mem::size_of, path::PathBuf};
 
 fn main() {
+
     dbg!(size_of::<syntax::ast::SourceFile>());
     dbg!(size_of::<syntax::ast::Item>());
     dbg!(size_of::<syntax::ast::Statement>());
@@ -19,8 +20,8 @@ fn main() {
     path.push("as-src");
 
     if true {
-        let mut pb = AstBuilder::new();
-        fn traverse_dir(dir: PathBuf, pb: &mut AstBuilder) {
+        let mut sb = SemaBuilder::new();
+        fn traverse_dir(dir: PathBuf, pb: &mut SemaBuilder) {
             for e in std::fs::read_dir(dir).unwrap() {
                 let e = e.unwrap();
                 let ty = e.file_type().unwrap();
@@ -42,16 +43,18 @@ fn main() {
                 }
             }
         }
-        traverse_dir(path, &mut pb);
-        let (mut ast, mut int) = pb.into_ast_int();
-        println!("{}", ast.dump(&int).as_str());
+        traverse_dir(path, &mut sb);
+        let mut sema = sb.into_sema();
+        sema.analyze();
+        
+        println!("{}", sema.dump().as_str());
     }
 }
 
 #[allow(dead_code)]
 fn print_tokens(src: &str) {
-    let mut pb = AstBuilder::new();
-    let mut parser = Parser::new(&mut pb, src);
+    let mut sb = SemaBuilder::new();
+    let mut parser = Parser::new(&mut sb, src);
     loop {
         let tok = parser.peek_ex();
         let range = tok.span.lo.byte_pos as usize..tok.span.hi.byte_pos as usize;

@@ -1,16 +1,18 @@
 use std::collections::VecDeque;
 
-use data_structures::interner::Interner;
+use crate::{
+    semantic::sema::{ErrorInfo, Sema},
+    syntax::token::mk_ident,
+};
 
 use super::{
-    ast::{AstBuilder, AstPool, Block, ErrorInfo},
+    ast::{Block, SemaBuilder, WithSymbol},
     token::{self, DelimKind, Ident, Location, Span, Token, TokenEx, WsToken},
 };
 
-pub struct Parser<'a, 'b, 'c> {
-    pub(crate) int: &'a mut Interner,
-    pub(crate) pool: &'b mut AstPool,
-    state: LexState<'c>,
+pub struct Parser<'a, 'b> {
+    pub(crate) sema: &'a mut Sema,
+    state: LexState<'b>,
     indent_level: u32,
     prev: Option<TokenEx>,
     toks: VecDeque<TokenEx>,
@@ -152,12 +154,11 @@ impl<'a> LexState<'a> {
     }
 }
 
-impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
-    pub fn new<'d: 'a + 'b>(builder: &'d mut AstBuilder, input: &'c str) -> Self {
+impl<'a, 'b> Parser<'a, 'b> {
+    pub fn new(sema: &'a mut SemaBuilder, input: &'b str) -> Self {
         let lexer = LexState::new(input);
         let mut this = Self {
-            int: &mut builder.int,
-            pool: &mut builder.pool,
+            sema: &mut sema.sema,
             state: lexer,
             indent_level: 0,
             prev: None,
@@ -177,18 +178,33 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         }
         this
     }
-    pub(crate) fn parse<'d: 'a + 'b>(
-        builder: &'d mut AstBuilder,
-        input: &'c str,
-    ) -> (Block, Vec<ErrorInfo>) {
-        let mut this = Self::new(builder, input);
-        let block = this.parse_block(Token::Eof).unwrap();
+    pub(crate) fn parse(sema: &'a mut SemaBuilder, input: &'b str) -> (Block, Vec<ErrorInfo>) {
+        let mut this = Self::new(sema, input);
+        let block = this.block(Token::Eof).unwrap();
         (block, this.errors)
     }
 
+    // delete
+    pub(crate) fn mk_with_unresolved_symbol<T>(&self, t: T) -> WithSymbol<T> {
+        WithSymbol {
+            t,
+            symbol: self.sema.unresolved_sym(),
+        }
+    }
+
+    #[track_caller]
     pub fn report_span(&mut self, msg: String, span: Span) {
+        let loc = std::panic::Location::caller();
+        let msg = format!(
+            "{} Compiler[{}:{}:{}]",
+            msg,
+            loc.file(),
+            loc.line(),
+            loc.column()
+        );
         self.errors.push(ErrorInfo { msg, span });
     }
+    #[track_caller]
     pub fn report(&mut self, msg: String) {
         let span = self.peek_ex().span;
         self.report_span(msg, span);
@@ -236,6 +252,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             self.toks.push_back(tok);
         }
     }
+    #[track_caller]
     pub fn expect(&mut self, expected: Token) -> Option<()> {
         if self.peek() == expected {
             self.bump();
@@ -249,6 +266,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             None
         }
     }
+    #[track_caller]
     pub fn expect_ident(&mut self) -> Option<Ident> {
         if let Token::Ident(id) = self.peek() {
             self.bump();
@@ -294,7 +312,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
     }
 }
 
-impl Parser<'_, '_, '_> {
+impl Parser<'_, '_> {
     // [Indent? Token? (Dedent+ NewLine | NewLine)?] [Dedent] Eof
     fn next_token(&mut self) -> TokenEx {
         /*
@@ -549,7 +567,7 @@ impl Parser<'_, '_, '_> {
                     } else {
                         match self.state.next_char() {
                             '"' => {
-                                let intern = self.int.intern(
+                                let intern = self.sema.interner.intern(
                                     self.state.input[start as usize..end as usize].as_bytes(),
                                 );
                                 break Quote(intern);
@@ -575,15 +593,14 @@ impl Parser<'_, '_, '_> {
                 } else {
                     use token::Keyword::*;
                     match s {
-                        "module" => Keyword(Auto),
+                        "module" => Keyword(Module),
                         "struct" => Keyword(Struct),
                         "union" => Keyword(Union),
                         "enum" => Keyword(Enum),
-                        "func" => Keyword(Func),
-                        "type" => Keyword(Type),
+                        "fn" => Keyword(Fn),
                         "const" => Keyword(Const),
+                        "mut" => Keyword(Mut),
                         "let" => Keyword(Let),
-                        "var" => Keyword(Var),
                         "break" => Keyword(Break),
                         "continue" => Keyword(Continue),
                         "return" => Keyword(Return),
@@ -599,10 +616,7 @@ impl Parser<'_, '_, '_> {
                         "yield" => Keyword(Yield),
                         "await" => Keyword(Await),
                         "in" => Keyword(In),
-                        _ => {
-                            let intern = self.int.intern(s.as_bytes());
-                            Ident(super::token::Ident(intern))
-                        }
+                        _ => Ident(mk_ident(&mut self.sema.interner, s)),
                     }
                 }
             }
@@ -613,7 +627,7 @@ impl Parser<'_, '_, '_> {
                 let end = self.state.loc.byte_pos;
                 let s = &self.state.input[start_loc.byte_pos as usize..end as usize];
                 if let Ok(n) = u64::from_str_radix(s, 10) {
-                    let intern = self.int.intern(&n.to_le_bytes());
+                    let intern = self.sema.interner.intern(&n.to_le_bytes());
                     Number(intern)
                 } else {
                     self.report("number is too big".to_string());
