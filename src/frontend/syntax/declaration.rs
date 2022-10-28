@@ -1,8 +1,6 @@
-use crate::semantic::sema::TypeKind;
-
 use super::ast::{
-    BindQualifier, ConstItem, EnumItem, Field, FuncItem, Item, ItemKind, ModuleItem, Pattern,
-    PatternDecl, PatternKind, StructItem, UnionItem, Visibility,
+    BindQualifier, CmpKind, ConstItem, EnumItem, Field, FuncItem, Item, ItemKind, ModuleItem,
+    Pattern, PatternDecl, PatternKind, StructItem, UnionItem, Visibility,
 };
 use super::parser::Parser;
 use super::token::{DelimKind, Keyword, Token};
@@ -57,25 +55,25 @@ impl Parser<'_, '_> {
             }
             Keyword::Module => {
                 let body = self.line_block()?;
-                ItemKind::Module(ModuleItem(body, self.sema.dummy_scope))
+                ItemKind::Module(ModuleItem(body))
             }
             Keyword::Struct => {
                 self.expect(Token::NewLine);
                 let fields = self.field_list();
                 let fields = self.sema.ast.fields.alloc_with(fields.into_iter());
-                ItemKind::Struct(StructItem(fields, self.sema.dummy_scope))
+                ItemKind::Struct(StructItem(fields))
             }
             Keyword::Union => {
                 self.expect(Token::NewLine);
                 let fields = self.field_list();
                 let fields = self.sema.ast.fields.alloc_with(fields.into_iter());
-                ItemKind::Union(UnionItem(fields, self.sema.dummy_scope))
+                ItemKind::Union(UnionItem(fields))
             }
             Keyword::Enum => {
                 self.expect(Token::NewLine);
                 let decls = self.enum_member_list();
                 let decls = self.sema.ast.patdecls.alloc_with(decls.into_iter());
-                ItemKind::Enum(EnumItem(decls, self.sema.dummy_scope))
+                ItemKind::Enum(EnumItem(decls))
             }
             Keyword::Fn => {
                 let params = self.parse_comma(DelimKind::Paren, Self::param_func);
@@ -95,7 +93,7 @@ impl Parser<'_, '_> {
         };
         Some(Item {
             vis,
-            name: self.mk_with_unresolved_symbol(name),
+            name,
             generics,
             kind: body,
         })
@@ -104,14 +102,6 @@ impl Parser<'_, '_> {
     pub(crate) fn bind_pattern(&mut self) -> Option<Pattern> {
         let start = self.peek_ex().span.lo;
         let bind_kind = match self.peek() {
-            Token::Amp => {
-                self.bump();
-                Some(BindQualifier::Ref(false))
-            }
-            Token::Amp2 => {
-                self.bump();
-                Some(BindQualifier::Ref(true))
-            }
             Token::Keyword(Keyword::Mut) => {
                 self.bump();
                 Some(BindQualifier::Mut)
@@ -121,15 +111,19 @@ impl Parser<'_, '_> {
         let kind = match self.peek() {
             Token::Ident(id) => {
                 self.bump();
-                PatternKind::Bind(bind_kind, self.mk_with_unresolved_symbol(id))
+                let sub = if self.accept(Token::Pipe) {
+                    let pat = self.pattern()?;
+                    let pat = self.sema.ast.pats.alloc(pat);
+                    Some(pat)
+                } else {
+                    None
+                };
+                PatternKind::Name(bind_kind, id, sub)
             }
             _ => return self.pattern(),
         };
         let span = start.to(self.peek_ex_prev().span.hi);
-        Some(Pattern {
-            kind,
-            span,
-        })
+        Some(Pattern { kind, span })
     }
 
     pub(crate) fn pattern(&mut self) -> Option<Pattern> {
@@ -147,24 +141,20 @@ impl Parser<'_, '_> {
                 self.bump();
                 PatternKind::Rest
             }
-            Token::Eq => {
+            kind @ (Token::Lt | Token::Ge | Token::Le | Token::Gt | Token::Eq | Token::Ne) => {
                 self.bump();
+                let kind = match kind {
+                    Token::Lt => CmpKind::Lt,
+                    Token::Ge => CmpKind::Ge,
+                    Token::Le => CmpKind::Le,
+                    Token::Gt => CmpKind::Gt,
+                    Token::Eq => CmpKind::Eq,
+                    Token::Ne => CmpKind::Ne,
+                    _ => unreachable!(),
+                };
                 let expr = self.expression()?;
                 let expr = self.sema.ast.exprs.alloc(expr);
-                PatternKind::Constant(expr)
-            }
-            Token::Dot => {
-                self.bump();
-                let id = self.expect_ident()?;
-                let sub = if let Token::OpenDelim(DelimKind::Paren | DelimKind::Curly) = self.peek()
-                {
-                    let pat = self.bind_pattern()?;
-                    let pat = self.sema.ast.pats.alloc(pat);
-                    Some(pat)
-                } else {
-                    None
-                };
-                PatternKind::DotId(self.mk_with_unresolved_symbol(id), sub)
+                PatternKind::Cmp(kind, expr)
             }
             Token::OpenDelim(DelimKind::Paren) => {
                 self.bump();
@@ -184,10 +174,7 @@ impl Parser<'_, '_> {
             }
         };
         let span = start.to(self.peek_ex_prev().span.hi);
-        Some(Pattern {
-            kind,
-            span,
-        })
+        Some(Pattern { kind, span })
     }
 
     pub(crate) fn param_func(&mut self) -> Option<PatternDecl> {
@@ -235,10 +222,7 @@ impl Parser<'_, '_> {
             self.expect(Token::Colon);
             let ty = self.type_expr().unwrap();
             let ty = self.sema.ast.exprs.alloc(ty);
-            fields.push(Field {
-                name: self.mk_with_unresolved_symbol(name),
-                ty,
-            });
+            fields.push(Field { name, ty });
             if !self.accept(Token::NewLine) {
                 break;
             }

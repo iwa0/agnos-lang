@@ -10,4 +10,6 @@ path = "lib.rs"
 
 [dependencies]
 data_structures={path="../data_structures"}
-typed-arena = "2.0.1"
+bumpalo = "3.11.0"
+smallvec = "1.10.0"
+bitvec = "1.0.1"

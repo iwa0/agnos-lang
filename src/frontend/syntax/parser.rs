@@ -1,12 +1,12 @@
 use std::collections::VecDeque;
 
 use crate::{
-    semantic::sema::{ErrorInfo, Sema},
+    semantic::sema_decl::{ErrorInfo, Sema},
     syntax::token::mk_ident,
 };
 
 use super::{
-    ast::{Block, SemaBuilder, WithSymbol},
+    ast::{Block, SemaBuilder},
     token::{self, DelimKind, Ident, Location, Span, Token, TokenEx, WsToken},
 };
 
@@ -182,14 +182,6 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut this = Self::new(sema, input);
         let block = this.block(Token::Eof).unwrap();
         (block, this.errors)
-    }
-
-    // delete
-    pub(crate) fn mk_with_unresolved_symbol<T>(&self, t: T) -> WithSymbol<T> {
-        WithSymbol {
-            t,
-            symbol: self.sema.unresolved_sym(),
-        }
     }
 
     #[track_caller]
@@ -542,7 +534,7 @@ impl Parser<'_, '_> {
             '|' => match_or(self, '|', Pipe2, Pipe),
             '~' => Tilde,
             '^' => Caret,
-            '!' => match_or(self, '=', NEq, ExclMark),
+            '!' => match_or(self, '=', Ne, ExclMark),
             '=' => match self.state.peek_char_ahead(0) {
                 Some('=') => {
                     self.state.next_char();

@@ -64,8 +64,8 @@ impl<T> Copy for SliceIndex<T> {}
 
 impl<T> Hash for SliceIndex<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u32(self.0.0.get());
-        state.write_u32(self.0.1);
+        state.write_u32(self.0 .0.get());
+        state.write_u32(self.0 .1);
     }
 }
 
@@ -147,15 +147,11 @@ impl<T> SliceIndex<T> {
 impl<T> Iterator for SliceIter<T> {
     type Item = ElementIndex<T>;
     fn next(&mut self) -> Option<Self::Item> {
-        let inner = &mut self.0;
+        let SliceIter { 0: inner } = self;
         if inner.0.len() > 0 {
-            let item;
-            let trimmed;
-            unsafe {
-                item = inner.nth_unchecked(0);
-                trimmed = SliceIndex(inner.0.trim_start_n_unchecked(1), PhantomData);
-            }
-            *self = Self(trimmed);
+            let (item, trimmed) =
+                unsafe { (inner.nth_unchecked(0), inner.0.trim_start_n_unchecked(1)) };
+            *inner = SliceIndex(trimmed, PhantomData);
             Some(item)
         } else {
             None
@@ -188,20 +184,19 @@ impl<T> IndexAccessor for SliceIndex<T> {
 }
 
 impl<T> IndexVec<T> {
-    
     pub fn new() -> Self {
         Self(Vec::new(), PhantomData)
     }
-    
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
-    
+
     fn minus_index_as_nz32(&self, n: usize) -> NonZeroU32 {
         let idx = self.len() - n + 1;
         NonZeroU32::new(idx as u32).unwrap()
     }
-    
+
     pub fn next_id(&self) -> ElementIndex<T> {
         let idx = self.minus_index_as_nz32(0);
         ElementIndex(ElementIndexInner(idx), PhantomData)
@@ -219,13 +214,19 @@ impl<T> IndexVec<T> {
         self.0.iter_mut()
     }
 
-    fn last_id(&self) -> ElementIndex<T> {
+    pub fn last_id(&self) -> ElementIndex<T> {
         let idx = self.minus_index_as_nz32(1);
         ElementIndex(ElementIndexInner(idx), PhantomData)
     }
-    fn last_n_id(&self, n: usize) -> SliceIndex<T> {
+    pub fn last_n_id(&self, n: usize) -> SliceIndex<T> {
         let idx = self.minus_index_as_nz32(n);
         SliceIndex(SliceIndexInner(idx, n as u32), PhantomData)
+    }
+
+    pub fn all_ids(&self) -> SliceIndex<T> {
+        let idx = NonZeroU32::new(1).unwrap();
+        let len = self.len() as u32;
+        SliceIndex(SliceIndexInner(idx, len), PhantomData)
     }
 
     pub fn alloc(&mut self, v: T) -> ElementIndex<T> {

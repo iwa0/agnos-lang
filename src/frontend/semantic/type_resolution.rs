@@ -1,29 +1,3 @@
-use std::{collections::{HashMap, HashSet}, cell::{Cell, RefCell}, borrow::BorrowMut};
-
-use data_structures::{indexvec::IndexVec, interner::Interner};
-use typed_arena::Arena;
-
-use crate::{
-    semantic::{
-        name_analysis::{Scope, ScopeId},
-        sema::{Value, ValueKind},
-    },
-    syntax::{
-        ast::{
-            Ast, BinaryOpKind, BlockKind, ConstItem, EnumItem, ExprId, Expression, ExpressionKind,
-            FieldId, FuncItem, IdId, IdListId, ItemId, ItemKind, Literal, ModuleItem, PatDeclId,
-            PatId, PatternKind, SourceFileId, StmtId, StructItem, UnaryOpKind, UnionItem, Item, Apply,
-        },
-        ast_visitor::AstVisitor,
-        token::{mk_ident, Ident, rd_ident},
-    },
-};
-
-use super::{
-    sema::{Sema, Type, TypeKind},
-    symbol_table::{AstNodeId, BuiltinSymbolKind, SymbolId, SymbolKind},
-};
-
 // sema.rs + symbol_table.rs -> sema_decl.rs + sema_impl.rs
 // type_resolution ->? sema_impl.rs
 // decl expr stmt -> rs
@@ -31,7 +5,7 @@ use super::{
 // name binding, type analysis, infer
 // check...
 
-pub struct TypeResolver<'a> {
+/*pub struct TypeResolver<'a> {
 
 }
 
@@ -52,7 +26,7 @@ impl<'a, 'b> EvaluatorRef<'a, 'b> {
         let mut this = Self { sema, next_tyvar: 0, values: &mut val_arena, types: &mut type_arena, val_intern: &mut val_intern };
         this.visit_root();
     }
-    
+
     fn intern_val(&mut self, val: Value<'b>) -> &'b Value {
         let set = &mut *self.val_intern.borrow_mut();
         if let Some(val) = set.get(&val) {
@@ -117,16 +91,16 @@ impl<'a, 'b> EvaluatorRef<'a, 'b> {
             ItemKind::Const(_) => todo!(),
             ItemKind::Module(_) => panic!(),
             ItemKind::Struct(StructItem(fields, _)) => {
-                
-                let tys = fields.iter().map(|id| self.sema.ast.fields[id]).map(|field| self.eval(field.ty).as_type().unwrap_or(err_ty)).collect();             
+
+                let tys = fields.iter().map(|id| self.sema.ast.fields[id]).map(|field| self.eval(field.ty).as_type().unwrap_or(err_ty)).collect();
                 TypeKind::Struct(tys)
             }
             ItemKind::Union(UnionItem(variants, _)) => {
-                let tys = variants.iter().map(|id| self.sema.ast.fields[id]).map(|variant| self.eval(variant.ty).as_type().unwrap_or(err_ty)).collect();             
+                let tys = variants.iter().map(|id| self.sema.ast.fields[id]).map(|variant| self.eval(variant.ty).as_type().unwrap_or(err_ty)).collect();
                 TypeKind::Union(tys)
             }
             ItemKind::Enum(EnumItem(enumerators, _)) => {
-                let vec = 
+                let vec =
                 enumerators.iter().map(|id| self.sema.ast.patdecls[id])
                 .map(|enumerator| enumerator );
                 //let enumer_cnt: u32 = enumerators.len().try_into();
@@ -160,7 +134,7 @@ impl<'a, 'b> EvaluatorRef<'a, 'b> {
                 TypeKind::Func(param_tys, ret_ty, body_ty)
             }
         };
-        
+
         self.types.alloc(Type { decl, kind })
     }
 
@@ -401,11 +375,11 @@ impl<'a, 'b> EvaluatorRef<'a, 'b> {
                     AstNodeId::File(file) => {
                         assert!(generic_args.len() == 0);
                         let file = &self.sema.ast.files[file];
-                        
+
                         todo!()
                     }
                     AstNodeId::Item(item) => {
-                        
+
                         todo!()
                     }
                     AstNodeId::Local(_) => todo!(),
@@ -493,7 +467,7 @@ impl<'a, 'b> EvaluatorRef<'a, 'b> {
         match callee_ty.kind {
             TypeKind::Func(ref params, ret, body) => {
                 let params = params.clone();
-                
+
                 //self.infer(body, ret);
                 //ret_ty could be generic, we need to eval ret expr here
                 // generic instantiation..?
@@ -620,7 +594,7 @@ impl<'a, 'b> EvaluatorRef<'a, 'b> {
                                 }
                             }
                         } else {
-                            
+
                             //vec.extend(std::iter::repeat(val).take(generics.len()));
                             //self.inst_type(sym, args)
                             todo!()
@@ -924,7 +898,7 @@ impl<'a, 'b> EvaluatorRef<'a, 'b> {
                     annot_ty.clone()
                 };
                 for body in bodies.iter() {
-                    tyy = 
+                    tyy =
                     self.infer(body, &tyy);
                 }
                 tyy
@@ -1041,3 +1015,4 @@ impl AstVisitor<()> for EvaluatorRef<'_> {
         self.traverse().visit_field(id)
     }
 }
+*/

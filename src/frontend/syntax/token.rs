@@ -82,7 +82,7 @@ pub enum Token {
 
     Eq,
     Eq2,
-    NEq,
+    Ne,
     Apostrophe,
 
     Underscore,

@@ -4,13 +4,13 @@ use data_structures::{
     tree::{TreeBuilder, TreeDumper},
 };
 
-use crate::semantic::{name_analysis::ScopeId, sema::Sema, symbol_table::AstNodeId};
+use crate::semantic::sema_decl::Sema;
 
 use super::{
     ast::{
-        Apply, Ast, AstPool, Block, ConstItem, EnumItem, ExprId, ExpressionKind, FieldId, FuncItem,
-        IdId, IdListId, ItemId, ItemKind, Literal, ModuleItem, PatDeclId, PatId, PatternKind,
-        SourceFileId, StatementKind, StmtId, StructItem, UnionItem,
+        Apply, Ast, Block, ConstItem, EnumItem, ExprId, ExpressionKind, FieldId,
+        FuncItem, IdId, IdListId, ItemId, ItemKind, Literal, ModuleItem, PatDeclId, PatId,
+        PatternKind, SourceFileId, StatementKind, StmtId, StructItem, UnionItem,
     },
     ast_visitor::AstVisitor,
     token::{rd_ident, Ident, Span},
@@ -86,9 +86,9 @@ impl Sema {
         */
 
         let mut err_dump = TreeBuilder::new();
-        for &(id, ref errs) in &self.errors {
+        for (&id, errs) in &self.errors {
             let file = self.ast.files[id];
-            let name = rd_ident(&self.interner, file.name.t);
+            let name = rd_ident(&self.interner, file.name);
             err_dump.push(format!("FileErrors({} - {})", name, id.index()));
             for err in errs {
                 err_dump.push(err.msg.clone());
@@ -110,7 +110,7 @@ impl Sema {
     }
 }
 
-fn dump_ast_node_id(tree: &mut TreeBuilder<String>, _: &AstPool, id: AstNodeId) {
+/*fn dump_ast_node_id(tree: &mut TreeBuilder<String>, _: &AstPool, id: AstNodeId) {
     let ref_desc = match id {
         AstNodeId::Null => format!("Unresolved"),
         AstNodeId::File(id) => format!("SourceFile({})", id.index()),
@@ -125,7 +125,7 @@ fn dump_ast_node_id(tree: &mut TreeBuilder<String>, _: &AstPool, id: AstNodeId) 
         AstNodeId::Field(id) => format!("Field({})", id.index()),
     };
     tree.add(format!("AstRef <{}>", ref_desc));
-}
+}*/
 
 struct AstDumpTree<'a> {
     sema: &'a Sema,
@@ -219,10 +219,10 @@ impl AstVisitor<()> for AstDumpTree<'_> {
         let elem = self.ast().items[id];
         match elem.kind {
             ItemKind::Const(ConstItem(_, _)) => self.push_name_id("Const", id),
-            ItemKind::Module(ModuleItem(_, sub)) => self.push_name_id("Module", id),
-            ItemKind::Struct(StructItem(_, sub)) => self.push_name_id("Struct", id),
-            ItemKind::Union(UnionItem(_, sub)) => self.push_name_id("Union", id),
-            ItemKind::Enum(EnumItem(_, sub)) => self.push_name_id("Enum", id),
+            ItemKind::Module(ModuleItem(_)) => self.push_name_id("Module", id),
+            ItemKind::Struct(StructItem(_)) => self.push_name_id("Struct", id),
+            ItemKind::Union(UnionItem(_)) => self.push_name_id("Union", id),
+            ItemKind::Enum(EnumItem(_)) => self.push_name_id("Enum", id),
             ItemKind::Func(FuncItem(_, _, _)) => self.push_name_id("Func", id),
         };
         self.name(format!("{:?}", elem.vis));
@@ -253,7 +253,7 @@ impl AstVisitor<()> for AstDumpTree<'_> {
         self.push_name_id_span("Expression", id, elem.span);
         let mut pops = 2;
         let _ = match elem.kind {
-            ExpressionKind::Use(_, scope) => self.push_name(format!("Use(in {:?})", scope.index())),
+            ExpressionKind::Use(_) => self.push_name_str("Use"),
             ExpressionKind::Literal(lit) => {
                 self.push_name_str("Literal");
                 match lit {
@@ -272,18 +272,18 @@ impl AstVisitor<()> for AstDumpTree<'_> {
             }
             ExpressionKind::Group(_) => self.push_name_str("Group"),
             ExpressionKind::Compound(_) => self.push_name_str("Compound"),
-            ExpressionKind::Unary(kind, _) => self.push_name(format!("Unary({:?})", kind.t)),
-            ExpressionKind::Binary(kind, _, _) => self.push_name(format!("Binary({:?})", kind.t)),
+            ExpressionKind::Unary(kind, _) => self.push_name(format!("Unary({:?})", kind)),
+            ExpressionKind::Binary(kind, _, _) => self.push_name(format!("Binary({:?})", kind)),
             ExpressionKind::Try(_) => self.push_name_str("Try"),
             ExpressionKind::Yield(_) => self.push_name_str("Yield"),
             ExpressionKind::Await(_, _) => self.push_name_str("Await"),
             ExpressionKind::Call(_, _) => self.push_name_str("Call"),
             ExpressionKind::Field(_, _) => self.push_name_str("Field"),
             ExpressionKind::MethodCall(_, _, _) => self.push_name_str("MethodCall"),
-            ExpressionKind::Case(_, _) => self.push_name_str("Case"),
             ExpressionKind::Block(Block { stmts: _, kind }) => {
                 self.push_name(format!("Block({:?})", kind))
             }
+            ExpressionKind::IfLet(_, _, _, _) => self.push_name_str("IfLet"),
             ExpressionKind::If(_, _, _) => self.push_name_str("If"),
             ExpressionKind::Match(_, _, _) => self.push_name_str("Match"),
             ExpressionKind::Do(_) => self.push_name_str("Do"),
@@ -302,9 +302,12 @@ impl AstVisitor<()> for AstDumpTree<'_> {
         match elem.kind {
             PatternKind::Wildcard => self.push_name_str("Wildcard"),
             PatternKind::Rest => self.push_name_str("Rest"),
-            PatternKind::Constant(_) => self.push_name_str("Constant"),
+            PatternKind::Cmp(kind, _) => self.push_name(format!("Cmp({:?})", kind)),
             PatternKind::Group(_) => self.push_name_str("Group"),
-            PatternKind::Bind(kind, _) => {
+            PatternKind::Rename(pat) => {
+                self.push_name_str("Rename")
+            }
+            PatternKind::Name(kind, _, _) => {
                 self.push_name_str("Bind");
                 if let Some(kind) = kind {
                     self.name(format!("Qualifier({:?})", kind))
@@ -312,7 +315,6 @@ impl AstVisitor<()> for AstDumpTree<'_> {
                     &mut *self
                 }
             }
-            PatternKind::DotId(_, _) => self.push_name_str("DotId"),
             PatternKind::Compound(_) => self.push_name_str("Compound"),
         };
         self.traverse().visit_pat(id);

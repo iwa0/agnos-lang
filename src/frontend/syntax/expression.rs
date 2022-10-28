@@ -1,5 +1,3 @@
-use crate::semantic::sema::TypeKind;
-
 use super::{
     ast::{
         Apply, BinaryOpKind, Block, BlockKind, Expression, ExpressionKind, Id, Literal, Statement,
@@ -18,7 +16,10 @@ impl Parser<'_, '_> {
         match self.peek() {
             Token::Ident(_) | Token::Dot => self.atom_expr(false),
             _ => {
-                self.report(format!("unknown type expression token: '{:?}'", self.peek()));
+                self.report(format!(
+                    "unknown type expression token: '{:?}'",
+                    self.peek()
+                ));
                 None
             }
         }
@@ -33,7 +34,7 @@ impl Parser<'_, '_> {
                 if let Some(arg) = arg {
                     let arg = self.sema.ast.exprs.alloc(arg);
                     let id = Id {
-                        id: self.mk_with_unresolved_symbol(id),
+                        id,
                         apply: Some(Apply::Juxtaposition(arg)),
                     };
                     list.push(id);
@@ -56,14 +57,11 @@ impl Parser<'_, '_> {
                 self.expect(Token::Gt);
                 let args = self.sema.ast.exprs.alloc_with(args.into_iter());
                 Id {
-                    id: self.mk_with_unresolved_symbol(id),
+                    id,
                     apply: Some(Apply::AngleBrackets(args)),
                 }
             } else {
-                Id {
-                    id: self.mk_with_unresolved_symbol(id),
-                    apply: None,
-                }
+                Id { id, apply: None }
             };
             list.push(id);
 
@@ -80,7 +78,7 @@ impl Parser<'_, '_> {
             Token::Ident(_) => {
                 let ids = self.id_list(disambiguate);
                 let ids = self.sema.ast.ids.alloc_with(ids.into_iter());
-                ExpressionKind::Use(ids, self.sema.dummy_scope)
+                ExpressionKind::Use(ids)
             }
             Token::Number(n) => {
                 self.bump();
@@ -134,10 +132,7 @@ impl Parser<'_, '_> {
             }
         };
         let span = start.to(self.peek_ex_prev().span.hi);
-        Some(Expression {
-            kind,
-            span,
-        })
+        Some(Expression { kind, span })
     }
 
     fn primary_expr(&mut self) -> Option<Expression> {
@@ -145,37 +140,74 @@ impl Parser<'_, '_> {
         let kind = match self.peek() {
             Token::Keyword(Keyword::If) => {
                 fn if_expr(this: &mut Parser) -> Option<ExpressionKind> {
-                    this.bump();
-                    let cond = this.expression()?;
-                    let then = this.line_block_as_expr()?;
-                    let has_else = matches!(this.peek(), Token::NewLine)
-                        && matches!(this.peek_ahead(1), Token::Keyword(Keyword::Else));
-                    let els = if has_else {
-                        this.bump();
-                        this.bump();
-                        match this.peek() {
-                            Token::Keyword(Keyword::If) => {
-                                let expr = this.primary_expr()?;
-                                Some(expr)
+                    this.expect(Token::Keyword(Keyword::If)).unwrap();
+                    if this.accept(Token::Keyword(Keyword::Let)) {
+                        let pat = this.pattern()?;
+                        this.expect(Token::Eq);
+                        let expr = this.expression()?;
+                        let pat = this.sema.ast.pats.alloc(pat);
+                        let expr = this.sema.ast.exprs.alloc(expr);
+
+                        let then = this.line_block_as_expr()?;
+                        let has_else = matches!(this.peek(), Token::NewLine)
+                            && matches!(this.peek_ahead(1), Token::Keyword(Keyword::Else));
+                        let els = if has_else {
+                            this.bump();
+                            this.bump();
+                            match this.peek() {
+                                Token::Keyword(Keyword::If) => {
+                                    let expr = this.primary_expr()?;
+                                    Some(expr)
+                                }
+                                Token::NewLine => {
+                                    let expr = this.line_block_as_expr()?;
+                                    Some(expr)
+                                }
+                                _ => {
+                                    this.report("unknown else token".to_string());
+                                    return None;
+                                }
                             }
-                            Token::NewLine => {
-                                let expr = this.line_block_as_expr()?;
-                                Some(expr)
-                            }
-                            _ => {
-                                this.report("unknown else token".to_string());
-                                return None;
-                            }
-                        }
+                        } else {
+                            None
+                        };
+                        let then = this.sema.ast.exprs.alloc(then);
+                        let els = els.map(|e| this.sema.ast.exprs.alloc(e));
+                        let expr = ExpressionKind::IfLet(pat, expr, then, els);
+                        Some(expr)
                     } else {
-                        None
-                    };
-                    let cond = this.sema.ast.exprs.alloc(cond);
-                    let then = this.sema.ast.exprs.alloc(then);
-                    let els = els.map(|e| this.sema.ast.exprs.alloc(e));
-                    let expr = ExpressionKind::If(cond, then, els);
-                    Some(expr)
+                        let cond = this.expression()?;
+                        let then = this.line_block_as_expr()?;
+                        let has_else = matches!(this.peek(), Token::NewLine)
+                            && matches!(this.peek_ahead(1), Token::Keyword(Keyword::Else));
+                        let els = if has_else {
+                            this.bump();
+                            this.bump();
+                            match this.peek() {
+                                Token::Keyword(Keyword::If) => {
+                                    let expr = this.primary_expr()?;
+                                    Some(expr)
+                                }
+                                Token::NewLine => {
+                                    let expr = this.line_block_as_expr()?;
+                                    Some(expr)
+                                }
+                                _ => {
+                                    this.report("unknown else token".to_string());
+                                    return None;
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        let cond = this.sema.ast.exprs.alloc(cond);
+                        let then = this.sema.ast.exprs.alloc(then);
+                        let els = els.map(|e| this.sema.ast.exprs.alloc(e));
+                        let expr = ExpressionKind::If(cond, then, els);
+                        Some(expr)
+                    }
                 }
+
                 let expr = if_expr(self)?;
                 expr
             }
@@ -237,10 +269,7 @@ impl Parser<'_, '_> {
             _ => return self.atom_expr(true),
         };
         let span = start.to(self.peek_ex_prev().span.hi);
-        Some(Expression {
-            kind,
-            span,
-        })
+        Some(Expression { kind, span })
     }
 
     /*
@@ -270,10 +299,8 @@ impl Parser<'_, '_> {
         }
         let prec = match self.peek() {
             Token::Keyword(Keyword::Yield) => PrefixPrec::Yield(1),
-            Token::Amp => PrefixPrec::UnOp(UnaryOpKind::RefTo, 19),
-            Token::ExclMark => PrefixPrec::UnOp(UnaryOpKind::BrNot, 19),
+            Token::ExclMark => PrefixPrec::UnOp(UnaryOpKind::Not, 19),
             Token::Minus => PrefixPrec::UnOp(UnaryOpKind::Neg, 19),
-            Token::Tilde => PrefixPrec::UnOp(UnaryOpKind::Not, 19),
             Token::Keyword(Keyword::Try) => PrefixPrec::Try(19),
             Token::Keyword(Keyword::Await) => PrefixPrec::Await(19),
             _ => PrefixPrec::Unmatched,
@@ -284,7 +311,7 @@ impl Parser<'_, '_> {
                 self.bump();
                 let op = self.suffix_expr(op_prec)?;
                 let op = self.sema.ast.exprs.alloc(op);
-                ExpressionKind::Unary(self.mk_with_unresolved_symbol(kind), op)
+                ExpressionKind::Unary(kind, op)
             }
             PrefixPrec::Try(op_prec) => {
                 self.bump();
@@ -314,10 +341,7 @@ impl Parser<'_, '_> {
             PrefixPrec::Unmatched => return self.primary_expr(),
         };
         let span = start.to(self.peek_ex_prev().span.hi);
-        Some(Expression {
-            kind,
-            span,
-        })
+        Some(Expression { kind, span })
     }
     fn suffix_expr(&mut self, min_prec: u32) -> Option<Expression> {
         let start = self.peek_ex().span.lo;
@@ -353,12 +377,11 @@ impl Parser<'_, '_> {
                 Token::Caret => Infix(BitXor, 9, 10),
                 Token::Pipe => Infix(BitOr, 7, 8),
                 Token::Eq2 => Infix(Eq, 6, 6),
-                Token::NEq => Infix(Ne, 6, 6),
+                Token::Ne => Infix(Ne, 6, 6),
                 Token::Le => Infix(Le, 6, 6),
                 Token::Ge => Infix(Ge, 6, 6),
                 Token::Lt => Infix(Lt, 6, 6),
                 Token::Gt => Infix(Gt, 6, 6),
-                Token::FatArrow => Postfix(6),
                 Token::Amp2 => Infix(BrAnd, 4, 5),
                 Token::Pipe2 => Infix(BrOr, 2, 3),
                 _ => Unmatched,
@@ -377,11 +400,7 @@ impl Parser<'_, '_> {
                         self.expect(Token::CloseDelim(DelimKind::Square));
                         let left = self.sema.ast.exprs.alloc(op);
                         let right = self.sema.ast.exprs.alloc(sub_op);
-                        ExpressionKind::Binary(
-                            self.mk_with_unresolved_symbol(BinaryOpKind::Index),
-                            left,
-                            right,
-                        )
+                        ExpressionKind::Binary(BinaryOpKind::Index, left, right)
                     }
                     Token::Dot => {
                         self.bump();
@@ -418,13 +437,6 @@ impl Parser<'_, '_> {
                             }
                         }
                     }
-                    Token::FatArrow => {
-                        self.bump();
-                        let pat = self.pattern()?;
-                        let expr = self.sema.ast.exprs.alloc(op);
-                        let pat = self.sema.ast.pats.alloc(pat);
-                        ExpressionKind::Case(expr, pat)
-                    }
                     _ => unreachable!(),
                 },
                 Infix(kind, left_prec, right_prec) if left_prec >= min_prec => {
@@ -435,15 +447,12 @@ impl Parser<'_, '_> {
                     let right = self.suffix_expr(right_prec)?;
                     let left = self.sema.ast.exprs.alloc(op);
                     let right = self.sema.ast.exprs.alloc(right);
-                    ExpressionKind::Binary(self.mk_with_unresolved_symbol(kind), left, right)
+                    ExpressionKind::Binary(kind, left, right)
                 }
                 _ => break Some(op),
             };
             let span = start.to(self.peek_ex_prev().span.hi);
-            op = Expression {
-                kind,
-                span,
-            };
+            op = Expression { kind, span };
         }
     }
 
@@ -512,8 +521,7 @@ impl Parser<'_, '_> {
             if let Some(stmt) = self.statement() {
                 trailing_semi = self.accept(Token::Semi);
                 if trailing_semi {
-                    let old_semi = last_semi_span.replace(self.peek_ex_prev().span);
-                    if let Some(span) = old_semi {
+                    if let Some(span) = last_semi_span.replace(self.peek_ex_prev().span) {
                         self.report_span(
                             "semi may only appear at the end of last statement".to_string(),
                             span,
@@ -522,6 +530,7 @@ impl Parser<'_, '_> {
                 }
                 stmts.push(stmt);
             } else {
+                trailing_semi = false;
                 while begin_indent < self.indent_level() {
                     self.bump();
                 }
@@ -541,25 +550,28 @@ impl Parser<'_, '_> {
         let last_expr = if let Some(&Statement {
             kind: StatementKind::Expr(expr),
             ..
-        }) = stmts.last() {
+        }) = stmts.last()
+        {
             Some(expr)
         } else {
             None
         };
-        let kind = 
-        if let Some(expr) = last_expr
-            && (trailing_semi
+        let kind = if let Some(expr) = last_expr {
+            if trailing_semi
                 || matches!(
                     self.sema.ast.exprs[expr].kind,
                     ExpressionKind::Do(_)
-                    | ExpressionKind::For(..)
-                    | ExpressionKind::While(..)
-                    | ExpressionKind::If(..)
-                    | ExpressionKind::Match(..)
-                    )
+                        | ExpressionKind::For(..)
+                        | ExpressionKind::While(..)
+                        | ExpressionKind::If(..)
+                        | ExpressionKind::Match(..)
                 )
-        {
-            BlockKind::Trailing(expr)
+            {
+                stmts.pop().unwrap();
+                BlockKind::Trailing(expr)
+            } else {
+                BlockKind::Void
+            }
         } else {
             BlockKind::Void
         };

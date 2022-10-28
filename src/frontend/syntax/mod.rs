@@ -1,8 +1,10 @@
 pub mod ast;
-pub mod dump;
-pub mod token;
-pub mod parser;
 pub mod ast_visitor;
-mod statement;
-mod expression;
 mod declaration;
+pub mod dump;
+mod expression;
+pub mod parser;
+mod statement;
+pub mod token;
+
+// inline ast module here

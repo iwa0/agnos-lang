@@ -20,13 +20,13 @@ while b != 0
 
 x = {.add, .bin{left,right}}
 
-if d > 10 && x => {.add, .bin{left,right}}
+if let {x|<5, =.add, =.bin{left,right}} = x
     f()
 
 match 5
-    .a => 2  
-    .b => 3
-    .c =>
+    =.a => 2  
+    =.b => 3
+    =.c =>
         a = 1
         a;
 

@@ -1,11 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::{
-    semantic::{
-        name_analysis::ScopeId,
-        sema::{ErrorInfo, Sema},
-        symbol_table::SymbolId,
-    },
+    semantic::sema_decl::{ErrorInfo, Sema},
     syntax::{
         parser::Parser,
         token::{Ident, Span},
@@ -37,14 +33,6 @@ pub type PatListId = SliceIndex<Pattern>;
 pub type PatDeclListId = SliceIndex<PatternDecl>;
 pub type FieldListId = SliceIndex<Field>;
 
-pub type Name = WithSymbol<Ident>;
-
-#[derive(Clone, Copy)]
-pub struct WithSymbol<T> {
-    pub t: T,
-    pub symbol: SymbolId,
-}
-
 pub struct Ast {
     pub(crate) pool: AstPool,
     pub root: SourceFileListId,
@@ -52,7 +40,7 @@ pub struct Ast {
 
 #[derive(Clone, Copy)]
 pub struct Id {
-    pub id: Name,
+    pub id: Ident,
     pub apply: Option<Apply>,
 }
 
@@ -64,9 +52,8 @@ pub enum Apply {
 
 #[derive(Clone, Copy)]
 pub struct SourceFile {
-    pub name: Name,
+    pub name: Ident,
     pub kind: SourceFileKind,
-    pub sub_scope: ScopeId,
 }
 
 #[derive(Clone, Copy)]
@@ -78,7 +65,7 @@ pub enum SourceFileKind {
 #[derive(Clone, Copy)]
 pub struct Item {
     pub vis: Visibility,
-    pub name: Name,
+    pub name: Ident,
     pub generics: Option<PatDeclListId>,
     pub kind: ItemKind,
 }
@@ -96,13 +83,13 @@ pub enum ItemKind {
 #[derive(Clone, Copy)]
 pub struct ConstItem(pub Option<ExprId>, pub ExprId);
 #[derive(Clone, Copy)]
-pub struct ModuleItem(pub Block, pub ScopeId);
+pub struct ModuleItem(pub Block);
 #[derive(Clone, Copy)]
-pub struct StructItem(pub FieldListId, pub ScopeId);
+pub struct StructItem(pub FieldListId);
 #[derive(Clone, Copy)]
-pub struct UnionItem(pub FieldListId, pub ScopeId);
+pub struct UnionItem(pub FieldListId);
 #[derive(Clone, Copy)]
-pub struct EnumItem(pub PatDeclListId, pub ScopeId);
+pub struct EnumItem(pub PatDeclListId);
 #[derive(Clone, Copy)]
 pub struct FuncItem(pub PatDeclListId, pub Option<ExprId>, pub ExprId);
 
@@ -116,11 +103,11 @@ pub struct Statement {
 pub enum StatementKind {
     Item(ItemId),
     Local(PatDeclId),
+    Assign(ExprId, ExprId),
     Defer(ExprId),
     Break(Option<Ident>, Option<ExprId>),
     Continue(Option<Ident>, Option<ExprId>),
     Return(Option<ExprId>),
-    Assign(ExprId, ExprId),
     //CompoundAssign(BinOpKind, ExprId, ExprId),
     Expr(ExprId),
 }
@@ -133,36 +120,44 @@ pub struct Expression {
 
 #[derive(Clone, Copy)]
 pub enum ExpressionKind {
-    Use(IdListId, ScopeId),
+    Use(IdListId),
     Literal(Literal),
     Group(ExprId),
     Compound(ExprListId),
-    Unary(WithSymbol<UnaryOpKind>, ExprId),
-    Binary(WithSymbol<BinaryOpKind>, ExprId, ExprId),
+    Unary(UnaryOpKind, ExprId),
+    Binary(BinaryOpKind, ExprId, ExprId),
+    Field(ExprId, Ident),
+    Call(ExprId, ExprListId),
+    MethodCall(ExprId, IdId, ExprListId),
     Try(ExprId),
     Yield(ExprId),
     Await(ExprId, Option<ExprId>),
-    Call(ExprId, ExprListId),
-    Field(ExprId, Name),
-    MethodCall(ExprId, IdId, ExprListId),
-    Case(ExprId, PatId),
-    Block(Block), // intermediate node
+    Block(Block),
+    Do(ExprId),
+    IfLet(PatId, ExprId, ExprId, Option<ExprId>),
     If(ExprId, ExprId, Option<ExprId>),
     Match(ExprId, PatListId, ExprListId),
-    Do(ExprId),
     While(ExprId, ExprId),
     For(PatId, ExprId, Option<ExprId>, ExprId),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnaryOpKind {
-    BrNot,
-    Not,
-    Neg,
-    RefTo, // move
+#[derive(Clone, Copy)]
+pub enum Literal {
+    Number(u64),
+    //Float
+    Char(char),
+    Quote(Intern),
+    DotId(IdId, Option<ExprListId>),
+    Undef,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum UnaryOpKind {
+    Not,
+    Neg,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum BinaryOpKind {
     Add,
     Sub,
@@ -180,7 +175,6 @@ pub enum BinaryOpKind {
     Le,
     Gt,
     Ge,
-
     Eq,
     Ne,
 
@@ -188,16 +182,6 @@ pub enum BinaryOpKind {
     BrOr,
 
     Index,
-}
-
-#[derive(Clone, Copy)]
-pub enum Literal {
-    Number(u64),
-    //Float
-    Char(char),
-    Quote(Intern),
-    DotId(IdId, Option<ExprListId>),
-    Undef,
 }
 
 #[derive(Clone, Copy)]
@@ -223,16 +207,26 @@ pub enum PatternKind {
     //Or(PatId, PatId),
     Wildcard,
     Rest,
-    Constant(ExprId),
+    Cmp(CmpKind, ExprId),
     Group(PatId),
-    Bind(Option<BindQualifier>, Name),
-    DotId(Name, Option<PatId>),
+    Rename(PatId),
+    Name(Option<BindQualifier>, Ident, Option<PatId>),
+    //DotId(Ident, Option<PatId>),
     Compound(PatListId),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum CmpKind {
+    Lt,
+    Ge,
+    Le,
+    Gt,
+    Eq,
+    Ne,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum BindQualifier {
-    Ref(bool),
     Mut,
 }
 
@@ -251,7 +245,7 @@ pub enum Visibility {
 
 #[derive(Clone, Copy)]
 pub struct Field {
-    pub name: Name,
+    pub name: Ident,
     pub ty: ExprId,
 }
 
@@ -290,12 +284,8 @@ impl SemaBuilder {
     pub fn push_dir(&mut self, name: &str) {
         self.files.push((
             SourceFile {
-                name: Name {
-                    t: mk_ident(&mut self.sema.interner, name),
-                    symbol: self.sema.unresolved_sym(),
-                },
+                name: mk_ident(&mut self.sema.interner, name),
                 kind: SourceFileKind::Dir(SliceIndex::empty()),
-                sub_scope: self.sema.dummy_scope,
             },
             Vec::new(),
         ));
@@ -307,12 +297,8 @@ impl SemaBuilder {
         let (block, errs) = Parser::parse(self, input);
         self.files.add((
             SourceFile {
-                name: Name {
-                    t: mk_ident(&mut self.sema.interner, name),
-                    symbol: self.sema.unresolved_sym(),
-                },
+                name: mk_ident(&mut self.sema.interner, name),
                 kind: SourceFileKind::File(block),
-                sub_scope: self.sema.dummy_scope,
             },
             errs,
         ));
@@ -342,7 +328,8 @@ impl SemaBuilder {
                     SourceFileKind::Dir(_) => {}
                     SourceFileKind::File(_) => {
                         if !err.is_empty() {
-                            sema.errors.push((id, err.clone()));
+                            let old = sema.errors.insert(id, err.clone());
+                            assert!(old.is_none());
                         }
                     }
                 }

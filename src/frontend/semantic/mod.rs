@@ -1,4 +1,7 @@
+pub mod il;
+pub mod ildecl;
+mod ilgen;
 pub mod sema;
-pub mod symbol_table;
-pub mod name_analysis;
+pub mod sema_decl;
+mod codegen;
 mod type_resolution;

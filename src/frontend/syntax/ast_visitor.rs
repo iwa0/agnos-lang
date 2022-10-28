@@ -10,8 +10,8 @@ use crate::syntax::ast::{
 
 use super::{
     ast::{
-        Ast, Block, ConstItem, EnumItem, Expression, Field, FuncItem, Id, Item, ModuleItem,
-        Pattern, PatternDecl, SourceFile, Statement, StructItem, UnionItem,
+        Ast, Block, BlockKind, ConstItem, EnumItem, Expression, Field, FuncItem, Id, Item,
+        ModuleItem, Pattern, PatternDecl, SourceFile, Statement, StructItem, UnionItem,
     },
     token::Ident,
 };
@@ -49,7 +49,7 @@ pub struct AstTraverser<'a, User: ?Sized + AstVisitor<()>> {
 }
 
 impl<'a, User: ?Sized + AstVisitor<()>> AstTraverser<'_, User> {
-    pub fn helper_visit_opt<U, F>(&mut self, elem: Option<U>, apply: F)
+    pub fn helper_user_visit_opt<U, F>(&mut self, elem: Option<U>, apply: F)
     where
         F: Fn(&mut User, U) -> (),
     {
@@ -57,7 +57,7 @@ impl<'a, User: ?Sized + AstVisitor<()>> AstTraverser<'_, User> {
             apply(&mut self.user, elem);
         }
     }
-    pub fn helper_visit_list<U, F>(&mut self, list: SliceIndex<U>, apply: F)
+    pub fn helper_user_visit_list<U, F>(&mut self, list: SliceIndex<U>, apply: F)
     where
         F: Fn(&mut User, ElementIndex<U>) -> (),
     {
@@ -72,54 +72,42 @@ impl<'a, User: ?Sized + AstVisitor<()>> AstTraverser<'_, User> {
             expr,
         } = self.ast().patdecls[id];
         self.user.visit_pat(pat);
-        self.user.traverse().helper_visit_opt(ty, User::visit_expr);
-        self.user
-            .traverse()
-            .helper_visit_opt(expr, User::visit_expr);
+        self.helper_user_visit_opt(ty, User::visit_expr);
+        self.helper_user_visit_opt(expr, User::visit_expr);
     }
     pub fn helper_user_visit_source_file_kind(&mut self, kind: SourceFileKind) {
         match kind {
-            SourceFileKind::Dir(dirs) => self
-                .user
-                .traverse()
-                .helper_visit_list(dirs, User::visit_source_file),
-            SourceFileKind::File(Block { stmts, kind: _ }) => self
-                .user
-                .traverse()
-                .helper_visit_list(stmts, User::visit_stmt),
+            SourceFileKind::Dir(dirs) => self.helper_user_visit_list(dirs, User::visit_source_file),
+            SourceFileKind::File(Block { stmts, kind }) => {
+                self.helper_user_visit_list(stmts, User::visit_stmt);
+                match kind {
+                    BlockKind::Void => {}
+                    BlockKind::Trailing(e) => self.visit_expr(e),
+                }
+            }
         }
     }
     pub fn helper_user_visit_item_body(&mut self, body: ItemKind) {
         match body {
             ItemKind::Const(ConstItem(annot_expr, expr)) => {
-                self.user
-                    .traverse()
-                    .helper_visit_opt(annot_expr, User::visit_expr);
+                self.helper_user_visit_opt(annot_expr, User::visit_expr);
                 self.user.visit_expr(expr);
             }
-            ItemKind::Module(ModuleItem(body, _)) => self
-                .user
-                .traverse()
-                .helper_visit_list(body.stmts, User::visit_stmt),
-            ItemKind::Struct(StructItem(body, _)) => self
-                .user
-                .traverse()
-                .helper_visit_list(body, User::visit_field),
-            ItemKind::Union(UnionItem(body, _)) => self
-                .user
-                .traverse()
-                .helper_visit_list(body, User::visit_variant),
-            ItemKind::Enum(EnumItem(body, _)) => self
-                .user
-                .traverse()
-                .helper_visit_list(body, User::visit_enumerator),
+            ItemKind::Module(ModuleItem(body)) => {
+                self.helper_user_visit_list(body.stmts, User::visit_stmt)
+            }
+            ItemKind::Struct(StructItem(body)) => {
+                self.helper_user_visit_list(body, User::visit_field)
+            }
+            ItemKind::Union(UnionItem(body)) => {
+                self.helper_user_visit_list(body, User::visit_variant)
+            }
+            ItemKind::Enum(EnumItem(body)) => {
+                self.helper_user_visit_list(body, User::visit_enumerator)
+            }
             ItemKind::Func(FuncItem(params, ret_ty, body)) => {
-                self.user
-                    .traverse()
-                    .helper_visit_list(params, User::visit_param);
-                self.user
-                    .traverse()
-                    .helper_visit_opt(ret_ty, User::visit_expr);
+                self.helper_user_visit_list(params, User::visit_param);
+                self.helper_user_visit_opt(ret_ty, User::visit_expr);
                 self.user.visit_expr(body);
             }
         }
@@ -136,37 +124,29 @@ impl<User: ?Sized + AstVisitor<()>> AstVisitor<()> for AstTraverser<'_, User> {
 
     fn visit_root(&mut self) {
         let root = self.ast().root;
-        self.user
-            .traverse()
-            .helper_visit_list(root, User::visit_source_file);
+        self.helper_user_visit_list(root, User::visit_source_file);
     }
 
     fn visit_ident(&mut self, _id: Ident) {}
 
     fn visit_path(&mut self, id: IdListId) {
-        self.user.traverse().helper_visit_list(id, User::visit_id)
+        self.helper_user_visit_list(id, User::visit_id)
     }
 
     fn visit_id(&mut self, id: IdId) {
         let Id { id, apply } = self.ast().ids[id];
-        self.user.visit_ident(id.t);
-        self.user
-            .traverse()
-            .helper_visit_opt(apply, |usr, apply| match apply {
-                Apply::Juxtaposition(arg) => usr.visit_expr(arg),
-                Apply::AngleBrackets(args) => {
-                    usr.traverse().helper_visit_list(args, User::visit_expr)
-                }
-            });
+        self.user.visit_ident(id);
+        self.helper_user_visit_opt(apply, |usr, apply| match apply {
+            Apply::Juxtaposition(arg) => usr.visit_expr(arg),
+            Apply::AngleBrackets(args) => usr
+                .traverse()
+                .helper_user_visit_list(args, User::visit_expr),
+        });
     }
 
     fn visit_source_file(&mut self, id: SourceFileId) {
-        let SourceFile {
-            name,
-            kind,
-            sub_scope: _,
-        } = self.ast().files[id];
-        self.user.visit_ident(name.t);
+        let SourceFile { name, kind } = self.ast().files[id];
+        self.user.visit_ident(name);
         self.helper_user_visit_source_file_kind(kind)
     }
 
@@ -177,13 +157,11 @@ impl<User: ?Sized + AstVisitor<()>> AstVisitor<()> for AstTraverser<'_, User> {
             generics,
             kind: body,
         } = self.ast().items[id];
-        self.user.visit_ident(name.t);
-        self.user
-            .traverse()
-            .helper_visit_opt(generics, |usr, list| {
-                usr.traverse()
-                    .helper_visit_list(list, User::visit_generic_param)
-            });
+        self.user.visit_ident(name);
+        self.helper_user_visit_opt(generics, |usr, list| {
+            usr.traverse()
+                .helper_user_visit_list(list, User::visit_generic_param)
+        });
         self.helper_user_visit_item_body(body);
     }
 
@@ -194,20 +172,14 @@ impl<User: ?Sized + AstVisitor<()>> AstVisitor<()> for AstTraverser<'_, User> {
             StatementKind::Local(patdecl) => self.user.visit_local(patdecl),
             StatementKind::Defer(body) => self.user.visit_expr(body),
             StatementKind::Break(label, val) => {
-                self.user
-                    .traverse()
-                    .helper_visit_opt(label, User::visit_ident);
-                self.user.traverse().helper_visit_opt(val, User::visit_expr);
+                self.helper_user_visit_opt(label, User::visit_ident);
+                self.helper_user_visit_opt(val, User::visit_expr);
             }
             StatementKind::Continue(label, val) => {
-                self.user
-                    .traverse()
-                    .helper_visit_opt(label, User::visit_ident);
-                self.user.traverse().helper_visit_opt(val, User::visit_expr);
+                self.helper_user_visit_opt(label, User::visit_ident);
+                self.helper_user_visit_opt(val, User::visit_expr);
             }
-            StatementKind::Return(val) => {
-                self.user.traverse().helper_visit_opt(val, User::visit_expr)
-            }
+            StatementKind::Return(val) => self.helper_user_visit_opt(val, User::visit_expr),
             StatementKind::Assign(left, right) => {
                 self.user.visit_expr(left);
                 self.user.visit_expr(right);
@@ -219,24 +191,22 @@ impl<User: ?Sized + AstVisitor<()>> AstVisitor<()> for AstTraverser<'_, User> {
     fn visit_expr(&mut self, id: ExprId) {
         let Expression { kind, span: _ } = self.ast().exprs[id];
         match kind {
-            ExpressionKind::Use(path, _) => self.user.visit_path(path),
+            ExpressionKind::Use(path) => self.user.visit_path(path),
             ExpressionKind::Literal(lit) => match lit {
                 Literal::Number(_) => {}
                 Literal::Char(_) => {}
                 Literal::Quote(_) => {}
                 Literal::DotId(id, exprs) => {
                     self.user.visit_id(id);
-                    self.user.traverse().helper_visit_opt(exprs, |usr, list| {
-                        usr.traverse().helper_visit_list(list, User::visit_expr)
+                    self.helper_user_visit_opt(exprs, |usr, list| {
+                        usr.traverse()
+                            .helper_user_visit_list(list, User::visit_expr)
                     });
                 }
                 Literal::Undef => {}
             },
             ExpressionKind::Group(sub) => self.user.visit_expr(sub),
-            ExpressionKind::Compound(list) => self
-                .user
-                .traverse()
-                .helper_visit_list(list, User::visit_expr),
+            ExpressionKind::Compound(list) => self.helper_user_visit_list(list, User::visit_expr),
             ExpressionKind::Unary(_, op) => self.user.visit_expr(op),
             ExpressionKind::Binary(_, left, right) => {
                 self.user.visit_expr(left);
@@ -246,40 +216,38 @@ impl<User: ?Sized + AstVisitor<()>> AstVisitor<()> for AstTraverser<'_, User> {
             ExpressionKind::Yield(op) => self.user.visit_expr(op),
             ExpressionKind::Await(op, with) => {
                 self.user.visit_expr(op);
-                self.user
-                    .traverse()
-                    .helper_visit_opt(with, User::visit_expr);
+                self.helper_user_visit_opt(with, User::visit_expr);
             }
             ExpressionKind::Call(callee, args) => {
                 self.user.visit_expr(callee);
-                self.user
-                    .traverse()
-                    .helper_visit_list(args, User::visit_expr);
+                self.helper_user_visit_list(args, User::visit_expr);
             }
             ExpressionKind::Field(left, right) => {
                 self.user.visit_expr(left);
-                self.user.visit_ident(right.t);
+                self.user.visit_ident(right);
             }
             ExpressionKind::MethodCall(receiver, method, args) => {
                 self.user.visit_expr(receiver);
                 self.user.visit_id(method);
-                self.user
-                    .traverse()
-                    .helper_visit_list(args, User::visit_expr);
+                self.helper_user_visit_list(args, User::visit_expr);
             }
-            ExpressionKind::Case(expr, pat) => {
-                self.user.visit_expr(expr);
+            ExpressionKind::Block(Block { stmts, kind }) => {
+                self.helper_user_visit_list(stmts, User::visit_stmt);
+                match kind {
+                    BlockKind::Void => {}
+                    BlockKind::Trailing(e) => self.user.visit_expr(e),
+                }
+            }
+            ExpressionKind::IfLet(pat, expr, then, els) => {
                 self.user.visit_pat(pat);
-            }
-            ExpressionKind::Block(Block { stmts, kind: _ }) => {
-                self.user
-                    .traverse()
-                    .helper_visit_list(stmts, User::visit_stmt);
+                self.user.visit_expr(expr);
+                self.user.visit_expr(then);
+                self.helper_user_visit_opt(els, User::visit_expr);
             }
             ExpressionKind::If(cond, then, els) => {
                 self.user.visit_expr(cond);
                 self.user.visit_expr(then);
-                self.user.traverse().helper_visit_opt(els, User::visit_expr);
+                self.helper_user_visit_opt(els, User::visit_expr);
             }
             ExpressionKind::Match(op, cases, bodies) => {
                 self.user.visit_expr(op);
@@ -296,9 +264,7 @@ impl<User: ?Sized + AstVisitor<()>> AstVisitor<()> for AstTraverser<'_, User> {
             ExpressionKind::For(pat, in_, with, body) => {
                 self.user.visit_pat(pat);
                 self.user.visit_expr(in_);
-                self.user
-                    .traverse()
-                    .helper_visit_opt(with, User::visit_expr);
+                self.helper_user_visit_opt(with, User::visit_expr);
                 self.user.visit_expr(body);
             }
         }
@@ -309,17 +275,14 @@ impl<User: ?Sized + AstVisitor<()>> AstVisitor<()> for AstTraverser<'_, User> {
         match kind {
             PatternKind::Wildcard => {}
             PatternKind::Rest => {}
-            PatternKind::Constant(expr) => self.user.visit_expr(expr),
+            PatternKind::Cmp(_, expr) => self.user.visit_expr(expr),
             PatternKind::Group(pat) => self.user.visit_pat(pat),
-            PatternKind::Bind(_, id) => self.user.visit_ident(id.t),
-            PatternKind::DotId(id, pat) => {
-                self.user.visit_ident(id.t);
-                self.user.traverse().helper_visit_opt(pat, User::visit_pat);
+            PatternKind::Rename(pat) => self.user.visit_pat(pat),
+            PatternKind::Name(_, id, pat) => {
+                self.user.visit_ident(id);
+                self.helper_user_visit_opt(pat, User::visit_pat);
             }
-            PatternKind::Compound(pats) => self
-                .user
-                .traverse()
-                .helper_visit_list(pats, User::visit_pat),
+            PatternKind::Compound(pats) => self.helper_user_visit_list(pats, User::visit_pat),
         }
     }
 
@@ -341,13 +304,13 @@ impl<User: ?Sized + AstVisitor<()>> AstVisitor<()> for AstTraverser<'_, User> {
 
     fn visit_variant(&mut self, id: FieldId) {
         let Field { name, ty } = self.ast().fields[id];
-        self.user.visit_ident(name.t);
+        self.user.visit_ident(name);
         self.user.visit_expr(ty);
     }
 
     fn visit_field(&mut self, id: FieldId) {
         let Field { name, ty } = self.ast().fields[id];
-        self.user.visit_ident(name.t);
+        self.user.visit_ident(name);
         self.user.visit_expr(ty);
     }
 }

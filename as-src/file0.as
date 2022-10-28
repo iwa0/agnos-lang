@@ -14,7 +14,7 @@ enum Enu
 union Uni
     Unia: A
 
-fn fun<T>(x1: T, &y2: T, &&z3: T) u64
+fn fun<T>(x1: T, y2: T, z3: T) u64
     defer abort()
     let avar = await b c for d::e
     let test = yield x
@@ -28,5 +28,5 @@ fn* f(x1: S) xd
     return .a(1)
 
 let xlet = await a(123,4,5).xd() for 1
-let mut .avar {{.., =1, =5, _}, test}: .func!<u32, u64, .unit> = a!<a a>::a!::a d
+let mut {{.., =1, =5, _}, test}: .func!<u32, u64, .unit> = a!<a a>::a!::a d
 mut v

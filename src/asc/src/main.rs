@@ -1,10 +1,18 @@
 use frontend::{
+    semantic,
     syntax::{self, ast::SemaBuilder, parser::Parser, token::Token},
 };
 use std::{mem::size_of, path::PathBuf};
 
 fn main() {
-
+    dbg!(size_of::<semantic::il::BasicBlock>());
+    dbg!(size_of::<semantic::il::Operand>());
+    dbg!(size_of::<semantic::il::Instruction>());
+    dbg!(size_of::<semantic::il::Terminator>());
+    dbg!(size_of::<semantic::ildecl::Scope>());
+    dbg!(size_of::<semantic::ildecl::Type>());
+    dbg!(size_of::<semantic::il::Branch>());
+    //return;
     dbg!(size_of::<syntax::ast::SourceFile>());
     dbg!(size_of::<syntax::ast::Item>());
     dbg!(size_of::<syntax::ast::Statement>());
@@ -46,7 +54,7 @@ fn main() {
         traverse_dir(path, &mut sb);
         let mut sema = sb.into_sema();
         sema.analyze();
-        
+
         println!("{}", sema.dump().as_str());
     }
 }
